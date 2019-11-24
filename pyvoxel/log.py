@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
-from singleton import Singleton
+from pattern.singleton import Singleton
 
 class LogBase(logging.Logger, Singleton):
     def __init__(self, name, level=logging.DEBUG):
