@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
-from pattern.singleton import Singleton
+from pyvoxel.pattern.singleton import Singleton
 
 class LogBase(logging.Logger, Singleton):
     def __init__(self, name, level=logging.DEBUG):
