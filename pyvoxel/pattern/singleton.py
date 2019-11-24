@@ -3,9 +3,9 @@
 #单例模式
 class Singleton(object):
     def __new__(cls, *args, **kwargs):
-        if not hasattr(cls, '_instance'):
-            cls._instance = object.__new__(cls)
-        return cls._instance
+        if not hasattr(cls, '_singleton_instance'):
+            cls._singleton_instance = object.__new__(cls)
+        return cls._singleton_instance
 
 if __name__ == '__main__':
     class SingletonTest1(Singleton):
