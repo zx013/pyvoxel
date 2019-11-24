@@ -3,4 +3,4 @@ from pyvoxel.plugin import Plugin
 
 class TestPlugin(Plugin):
     def test(self):
-        return 'test'
+        return 'test base'
