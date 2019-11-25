@@ -6,10 +6,21 @@ from log import Log
 class Node(object):
     def __init__(self, name, space):
         self.name = name
+        self.space = space
         self.attr = []
 
         self.parent = None
         self.children = []
+
+    def show(self):
+        if self.name != 'root':
+            space = '    ' * self.space
+            print(space + '<' + self.name + '>:')
+            space += '    '
+            for key, val in self.attr:
+                print(space + key + ': ' + val)
+        for child in self.children:
+            child.show()
 
     def add(self, attr):
         self.attr.append(attr)
@@ -57,8 +68,11 @@ class Config(object):
         process_data = []
         plugins = set()
         base_class = '' #当前行所在最顶层的类
+        attr_space = -1 #属性对应的缩进
         last_space = -1
-        for line in lines:
+        for line_number, line in enumerate(lines):
+            line_number += 1 #行号
+
             #计算开头空格数
             space = 0
             for s in line:
@@ -110,11 +124,11 @@ class Config(object):
                     return False
 
                 class_name = split_key[0]
-                if not self._legal_class(class_name):
+                if not self._legal_class(class_name): #类命不合法
                     print('Class is illegal', class_name)
                     return False
 
-                if len(split_key) == 2: #新建类
+                if len(split_key) == 2: #新建类并设定格式
                     if space != 0: #新建类不能在其他类中定义
                         print('New class can not be define in other class')
                         return False
@@ -129,9 +143,9 @@ class Config(object):
                             print('Class not exist', base)
                             return False
                     plugins.add(class_name)
-                    
-                    process_data.append(('nclass', space - last_space, class_name, base_list))
-                else: #已有类
+
+                    process_data.append(('nclass', line_number, space, class_name, base_list))
+                else: #设定已有类格式
                     if space == 0:
                         base_class = ''
                     if class_name not in self.plugins and class_name not in plugins:
@@ -140,25 +154,42 @@ class Config(object):
                     if class_name == base_class: #新建类不能作为该类的子节点
                         print('New class can not be subclass')
                         return False
-                    process_data.append(('class', space - last_space, class_name))
-                    
-                node = Node(class_name, space)
-                cursor_node = node
-                #print(node.root)
+                    process_data.append(('class', line_number, space, class_name))
+                attr_space = space + 1
             else:
+                if space != attr_space: #属性值必须跟在类定义后面
+                    print('Attribute must follow class')
+                    return False
                 if not self._legal_var(key):
                     print('Var is illegal')
                     return False
 
-                process_data.append(('data', space - last_space, key, val))
-        
-            last_space = space
+                process_data.append(('data', line_number, space, key, val))
 
+            last_space = space
 
         cursor_node = self.root #当前节点
         last_space = 0 #上一行的缩进
         for line in process_data:
-            print(line)
+            line_type, line_number, space = line[:3]
+            line = line[3:]
+            if line_type == 'data':
+                key, val = line[:2]
+                cursor_node.add((key, val))
+            else:
+                class_name = line[0]
+                if line_type == 'nclass':
+                    base_list = line[1]
+
+                node = Node(class_name, space)
+                if space == cursor_node.space + 1:
+                    cursor_node.add_node(node)
+                else:
+                    parent = cursor_node.prev(space - cursor_node.space)
+                    parent.add_node(node)
+
+                cursor_node = node
+        self.root.show()
 
     #分割后去空格
     def _strip_split(self, info, sep, maxsplit=-1):
