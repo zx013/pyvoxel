@@ -4,10 +4,10 @@
     info: 'info: data01'
     info: 'info: data02'
 
-    <TestPlugin01>:
-        <TestPlugin02>:
-            <TestPlugin02>:
-    <TestPlugin01>:
+    TestPlugin01:
+        TestPlugin02:
+            TestPlugin02:
+    TestPlugin01:
 
 <TestWidget>:
-    <TestWidget>:
+    TestWidget:
