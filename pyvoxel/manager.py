@@ -43,7 +43,7 @@ class ManagerBase(Singleton):
 
     def load_plugin(self, name, isbase=False):
         '''
-        加载插件，插件文件名和目录需要小写，加载插件时名称忽略大小写
+        加载插件，插件文件名和目录需要小写，加载插件时名称忽略大小写，最好使用插件主类的名称
         '''
         name_lower = name.lower()
         if not os.path.isdir(os.path.join(self._plugin_dir, name_lower)):
@@ -56,31 +56,33 @@ class ManagerBase(Singleton):
             if isbase:
                 plugin = importlib.import_module('pyvoxel.{plugin_dir}.{name}.{name}'.format(plugin_dir=self._plugin_dir, name=name_lower)) #导入默认模块
             else:
-                plugin = importlib.import_module('{plugin_dir}.{name}'.format(plugin_dir=self._plugin_dir, name=name_lower)) #导入模块
-                plugin = getattr(plugin, name_lower)
+                plugin = importlib.import_module('{plugin_dir}.{name}.{name}'.format(plugin_dir=self._plugin_dir, name=name_lower)) #导入模块
             for class_name in dir(plugin): #传入的可能是小写字母，与对应类名称不同
                 if class_name.startswith('__') and class_name.endswith('__'):
                     continue
                 if class_name.lower() == name_lower:
-                    instance = getattr(plugin, class_name)
                     break
             else:
-                instance = getattr(plugin, name) #获取模块中的类
-            if name_lower in self._instance:
-                del self._instance[name_lower]
-            self._instance[name_lower] = instance
+                class_name = name
+            instance = getattr(plugin, class_name) #获取模块中的类
+            if class_name in self._instance:
+                del self._instance[class_name]
+            self._instance[class_name] = instance
             Log.debug('Plugin <{name} - {path}> loaded'.format(name=name, path=instance.__module__.split('.', 1)[0]))
             return True
         except Exception as ex:
             Log.error('Plugin <{name}> load failed - {ex}'.format(name=name, ex=ex))
             return False
 
+    def get_plugins(self):
+        return set(self._instance.keys())
+
     #实例化插件
     def __call__(self, name):
-        name_lower = name.lower()
-        if name_lower not in self._instance:
+        if name not in self._instance:
+            Log.warning('Plugin <{name}> not exist'.format(name=name))
             return None
-        instance = self._instance[name_lower]
+        instance = self._instance[name]
         return instance()
 
 
@@ -91,4 +93,4 @@ if __name__ == '__main__':
     Manager.auto_load()
     Manager.load_plugin('TestPlugin_no')
     
-    print(Manager('TestPlugin').test())
+    print(Manager('TestPlugin01').test())
