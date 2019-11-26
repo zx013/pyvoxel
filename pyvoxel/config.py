@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-from manager import Manager
-from log import Log
+from pyvoxel.manager import Manager
+from pyvoxel.log import Log
 
 
 class Node(object):
@@ -51,8 +51,19 @@ class Node(object):
 
 
 class Config(object):
+    '''
+    <>: 表示根类，用来定义或声明一个类
+    ->: 在根类中表示以别名新建已有的类，可以用别名搜索
+        在非根类中表示类的索引，该索引在当前根类中生效
+    (): 在非根类中通过不同的别名使用根类
+    root: 根类中所有元素使用root访问该类
+    self: 当前类
+    '''
     LEGAL_CLASS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    LEGAL_ALIAS = 'abcdefghijklmnopqrstuvwxyz0123456789_'
     LEGAL_VAR = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
+    
+    BASE_ALIAS = '__ALIAS__' #默认别名，使用大写保证和其他别名不相同
 
     def __init__(self):
         #tree = ElementTree.parse('config/testconfig.xml')
@@ -73,7 +84,16 @@ class Config(object):
             return False
         for s in class_name:
             if s not in self.LEGAL_VAR:
-                return ''
+                return False
+        return True
+
+    #判断别名是否合法
+    def _legal_alias(self, alias_name):
+        if not alias_name:
+            return False
+        for s in alias_name:
+            if s not in self.LEGAL_ALIAS:
+                return False
         return True
 
     def _check_class(self, class_name, plugins):
@@ -108,8 +128,8 @@ class Config(object):
             lines = fp.readlines()
 
         process_data = []
-        plugins = set()
         base_class = '' #当前行所在最顶层的类
+        base_alias = []
         attr_space = -1 #属性对应的缩进
         last_space = -1
         for line_number, line in enumerate(lines):
@@ -140,6 +160,8 @@ class Config(object):
             if space - last_space >= 2: #缩进跳跃太多，防止一次多2个缩进
                 print('Unindent does not match any outer indentation level')
                 return False
+            last_space = space
+
 
             split_line = self._strip_split(line, ':', 1)
             if len(split_line) == 1: #其他的语法
@@ -151,92 +173,111 @@ class Config(object):
                 print('Key is empty')
                 return False
 
-            #类的定义
-            if space == 0:
-                if key[0] != '<' or key[-1] != '>': #键值格式不对
-                    print('Key is not right')
+            if val: #定义属性
+                if space != attr_space: #属性值必须跟在类定义后面
+                    print('Attribute must follow class')
+                    return False
+
+                if not self._legal_var(key):
+                    print('Var is illegal')
                     return False
                 
-                if val:
-                    print('Val is not empty')
-                    return False
+                operate_type = 'attr'
+                process_data.append((operate_type, line_number, space, key, val))
+            else: #类
+                if space == 0:
+                    if key[0] != '<' or key[-1] != '>': #键值格式不对
+                        print('Key is not right')
+                        return False
+                
+                    #类的声明
+                    key = key[1:-1].strip()
+                    if not key: #键值为空
+                        print('Class is empty')
+                        return False
 
-                #类声明
-                key = key[1:-1].strip()
-                if not key: #键值为空
-                    print('Class is empty')
-                    return False
+                split_line = self._strip_split(key, '->', 1) #解析别名
+                if len(split_line) == 1:
+                    class_info, = split_line
+                    class_alias = self.BASE_ALIAS #没有别名
+                else:
+                    class_info, class_alias = split_line                    
+                
+                if class_info.endswith(')'): #
+                    class_info = class_info[:-1]
 
-                split_key = self._strip_split(key, '@')
-                if len(split_key) > 2: #@表示继承关系
-                    print('Too many @')
-                    return False
-
-                class_name = split_key[0]
-
-                if len(split_key) == 2:
+                    split_line = self._strip_split(class_info, '(', 1)
+                    if len(split_line) == 1:
+                        print('No ( find')
+                        return False
+                    
+                    class_name, alias_name = split_line
                     if not self._legal_class(class_name): #类命不合法
                         print('Class is illegal', class_name)
                         return False
 
-                    base_class = class_name
-    
-                    base_list = self._strip_split(split_key[1], '+')
-                    for base in base_list:
-                        if not self._check_class(base, plugins): #类命不合法
-                            print('Class is illegal or not exist', class_name)
-                            return False
+                    if not alias_name: #括号里为空
+                        print('Alias is empty')
+                        return False
 
-                    plugins.add(class_name)
-
-                    attr_space = space + 1
-                    process_data.append(('nclass', line_number, space, class_name, base_list))
+                    #新建类使用了别名，默认值设为该别名
+                    if not self._legal_alias(alias_name): #新建类
+                        cls_list = self._strip_split(alias_name, ',')
+                        for cls_name in cls_list:
+                            if not self._legal_class(cls_name): #类命不合法
+                                print('Class is illegal', cls_name)
+                                return False
+                        #使用cls_list创建名称为class_name的新类
+                        operate_type = 'newclass'
+                        data = cls_list
+                    else: #别名查找类
+                        #查找class_name类中别名为alias_name的子类
+                        operate_type = 'aliasclass'
+                        data = alias_name
                 else:
-                    if not self._check_class(class_name, plugins): #类命不合法
-                        print('Class is illegal or not exist', class_name)
+                    class_name = class_info
+                    if not self._legal_class(class_name): #类命不合法
+                        print('Class is illegal', class_name)
                         return False
-
-                    base_class = ''
-
-                    attr_space = space + 1
-                    process_data.append(('class', line_number, space, class_name))
-            else:
-                if not val: #设定已有类格式
-                    class_name = key
-                    if not self._check_class(class_name, plugins): #类命不合法
-                        print('Class is illegal or not exist', class_name)
-                        return False
-
+                    #普通查找class_name类
+                    operate_type = 'findclass'
+                    data = None
+                
+                if space == 0:
+                    if class_alias == self.BASE_ALIAS:
+                        base_class = ''
+                        base_alias = []
+                    else:
+                        base_class = class_name
+                        if operate_type == 'newclass':
+                            base_alias = [self.BASE_ALIAS, class_alias]
+                        else:
+                            base_alias = [class_alias]
+                            
+                else:
                     if class_name == base_class: #新建类不能作为该类的子节点
-                        print('New class can not be subclass')
-                        return False
-                    attr_space = space + 1
-                    process_data.append(('class', line_number, space, class_name))
-                else:
-                    if space != attr_space: #属性值必须跟在类定义后面
-                        print('Attribute must follow class')
-                        return False
-                    if not self._legal_var(key):
-                        print('Var is illegal')
-                        return False
-
-                    process_data.append(('data', line_number, space, key, val))
-
-            last_space = space
+                        if operate_type != 'aliasclass':
+                            alias_name = ''
+                        for alias in base_alias:
+                            if alias_name == alias:
+                                print('New class or Alias class can not be subclass')
+                                return False
+                    
+                process_data.append((operate_type, line_number, space, class_name, class_alias, data))
+                attr_space = space + 1
 
         cursor_node = self.root #当前节点
-        last_space = 0 #上一行的缩进
         for line in process_data:
-            line_type, line_number, space = line[:3]
+            operate_type, line_number, space = line[:3]
             line = line[3:]
-            if line_type == 'data':
+            if operate_type == 'attr':
                 key, val = line[:2]
                 self.analyse(val)
                 cursor_node.add((key, val))
             else:
-                class_name = line[0]
-                if line_type == 'nclass':
-                    base_list = line[1]
+                class_name, class_alias = line[:2]
+                if operate_type == 'newclass':
+                    cls_list = line[1]
 
                 node = Node(class_name, space)
                 if space == cursor_node.space + 1:
