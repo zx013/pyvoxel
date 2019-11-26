@@ -20,6 +20,9 @@
 <TestWidget>:
     name: name04
 
+<TestWidget -> tw3>:
+    name: name05
+
 <TestWidget01>:
     TestWidget(tw1) -> tw1:
     TestWidget(tw2):

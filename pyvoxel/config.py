@@ -266,6 +266,7 @@ class Config(object):
                 process_data.append((operate_type, line_number, space, class_name, class_alias, data))
                 attr_space = space + 1
 
+        node_dict = {}
         cursor_node = self.root #当前节点
         for line in process_data:
             operate_type, line_number, space = line[:3]
@@ -276,6 +277,7 @@ class Config(object):
                 cursor_node.add((key, val))
             else:
                 class_name, class_alias = line[:2]
+                print(class_name, class_alias)
                 if operate_type == 'newclass':
                     cls_list = line[1]
 
@@ -285,9 +287,17 @@ class Config(object):
                 else:
                     parent = cursor_node.prev(space - cursor_node.space)
                     parent.add_node(node)
+                
+                #类不能重复定义
+                if space == 0:
+                    if class_name not in node_dict:
+                        node_dict[class_name] = {}
+                        node_dict[class_name][self.BASE_ALIAS] = node
+                    node_dict[class_name][class_alias] = node
 
                 cursor_node = node
         self.root.show()
+        print(node_dict)
 
 
 if __name__ == '__main__':
