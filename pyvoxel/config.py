@@ -128,6 +128,7 @@ class Config(object):
             lines = fp.readlines()
 
         process_data = []
+        class_map = {}
         base_class = '' #当前行所在最顶层的类
         base_alias = []
         attr_space = -1 #属性对应的缩进
@@ -201,9 +202,12 @@ class Config(object):
                     class_info, = split_line
                     class_alias = self.BASE_ALIAS #没有别名
                 else:
-                    class_info, class_alias = split_line                    
+                    class_info, class_alias = split_line      
+                    if not self._legal_alias(class_alias): #别名不合法
+                        print('Alias is illegal')
+                        return False
                 
-                if class_info.endswith(')'): #
+                if class_info.endswith(')'):
                     class_info = class_info[:-1]
 
                     split_line = self._strip_split(class_info, '(', 1)
@@ -221,7 +225,7 @@ class Config(object):
                         return False
 
                     #新建类使用了别名，默认值设为该别名
-                    if not self._legal_alias(alias_name): #新建类
+                    if space == 0: #新建类不能使用别名索引
                         cls_list = self._strip_split(alias_name, ',')
                         for cls_name in cls_list:
                             if not self._legal_class(cls_name): #类命不合法
@@ -231,6 +235,9 @@ class Config(object):
                         operate_type = 'newclass'
                         data = cls_list
                     else: #别名查找类
+                        if not self._legal_alias(alias_name): #别名索引不合法
+                            print('Alias is illegal')
+                            return False
                         #查找class_name类中别名为alias_name的子类
                         operate_type = 'aliasclass'
                         data = alias_name
@@ -244,6 +251,19 @@ class Config(object):
                     data = None
                 
                 if space == 0:
+                    #新建类
+                    if class_name not in class_map: #类尚未新建
+                        class_map[class_name] = {}
+                        class_map[class_name][self.BASE_ALIAS] = None
+                    elif operate_type == 'newclass': #新建类之前不能有该类的其他定义
+                        print('New class must be first')
+                        return False
+                    elif class_alias in class_map[class_name]: #别名相同
+                        print('Class can not redefine', class_name, class_alias)
+                        return False
+                    class_map[class_name][class_alias] = None
+
+                    #防止类的嵌套定义，但无法处理循环嵌套
                     if class_alias == self.BASE_ALIAS:
                         base_class = ''
                         base_alias = []
@@ -253,20 +273,18 @@ class Config(object):
                             base_alias = [self.BASE_ALIAS, class_alias]
                         else:
                             base_alias = [class_alias]
-                            
                 else:
                     if class_name == base_class: #新建类不能作为该类的子节点
                         if operate_type != 'aliasclass':
-                            alias_name = ''
+                            alias_name = self.BASE_ALIAS
                         for alias in base_alias:
                             if alias_name == alias:
                                 print('New class or Alias class can not be subclass')
                                 return False
-                    
+
                 process_data.append((operate_type, line_number, space, class_name, class_alias, data))
                 attr_space = space + 1
 
-        node_dict = {}
         cursor_node = self.root #当前节点
         for line in process_data:
             operate_type, line_number, space = line[:3]
@@ -287,17 +305,10 @@ class Config(object):
                 else:
                     parent = cursor_node.prev(space - cursor_node.space)
                     parent.add_node(node)
-                
-                #类不能重复定义
-                if space == 0:
-                    if class_name not in node_dict:
-                        node_dict[class_name] = {}
-                        node_dict[class_name][self.BASE_ALIAS] = node
-                    node_dict[class_name][class_alias] = node
 
                 cursor_node = node
         self.root.show()
-        print(node_dict)
+        #print(node_dict)
 
 
 if __name__ == '__main__':
