@@ -1,4 +1,10 @@
- 
+
+<TestWidget01>:
+    TestWidget02:
+<TestWidget02>:
+    TestWidget01:
+<TestWidget03>:
+
 <TestWidget(TestPlugin01, TestPlugin02) -> tw1>:
     name: name01
     info: 'info: data01'
@@ -18,7 +24,9 @@
 <TestWidget -> tw3>:
     name: name03
 
-<TestWidget01>:
+<TestWidget(tw1, tw2) -> tw4>:
+
+<TestWidget05>:
     TestWidget(tw1) -> tw1:
     TestWidget(tw2):
     TestWidget(tw3):

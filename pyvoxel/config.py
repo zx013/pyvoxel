@@ -55,14 +55,15 @@ class Config(object):
     <>: 表示根类，用来定义或声明一个类
     ->: 在根类中表示以别名新建已有的类，可以用别名搜索
         在非根类中表示类的索引，该索引在当前根类中生效
-    (): 在非根类中通过不同的别名使用根类
+    (): 在根类中表示类的继承
+        在非根类中通过不同的别名使用根类
     root: 根类中所有元素使用root访问该类
     self: 当前类
     '''
     LEGAL_CLASS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     LEGAL_ALIAS = 'abcdefghijklmnopqrstuvwxyz0123456789_'
     LEGAL_VAR = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
-    
+
     BASE_ALIAS = '__ALIAS__' #默认别名，使用大写保证和其他别名不相同
 
     def __init__(self):
@@ -87,11 +88,23 @@ class Config(object):
                 return False
         return True
 
+    #判断是否是别名
+    def _is_alias(self, name):
+        if not name:
+            return False
+        if name == self.BASE_ALIAS:
+            return True
+        if name[0] not in self.LEGAL_ALIAS:
+            return False
+        return True
+
     #判断别名是否合法
     def _legal_alias(self, alias_name):
         if not alias_name:
             return False
-        for s in alias_name:
+        if alias_name == self.BASE_ALIAS: #默认别名
+            return True
+        for s in alias_name: #别名不能有大写字母
             if s not in self.LEGAL_ALIAS:
                 return False
         return True
@@ -115,6 +128,58 @@ class Config(object):
                 return ''
         return True
 
+    def _split_alias(self, name):
+        if name.endswith(')'):
+            name = name[:-1]
+
+            split_line = self._strip_split(name, '(', 1)
+            if len(split_line) == 1:
+                return False, 'No ( find'
+
+            class_name, alias_name = split_line
+            if not self._legal_class(class_name): #类命不合法
+                return False, 'Class is illegal ' + str(class_name)
+
+            if not alias_name: #括号里为空
+                return False, 'Alias is empty'
+
+            return True, (class_name, alias_name)
+
+        if not self._legal_class(name): #类命不合法
+            return False, 'Class is illegal ' + str(name)
+        return True, (name, self.BASE_ALIAS)
+
+    #检查继承
+    def is_nest_inherit(self, nest_inherit, class_key, cls_set):
+        while True:
+            class_next = set()
+            for cls_key in cls_set:
+                if cls_key not in nest_inherit:
+                    continue
+                class_next |= nest_inherit[cls_key]
+
+            if class_key in class_next:
+                return False
+
+            if not class_next:
+                break
+
+            cls_set = class_next
+        return True
+
+    def is_nest(self, nest_class, nest_inherit, nest_key, class_key):
+        nest_set = set()
+        nest_set.add(nest_key)
+        if nest_key in nest_inherit:
+            nest_set |= nest_inherit[nest_key]
+        if class_key in nest_set:
+            print('err')
+        for base_class, base_set in nest_class.items():
+            if not base_set:
+                continue
+        print(nest_set, class_key)
+        #print(base_class, base_set, class_key)
+
     def analyse(self, expr):
         '''
         解析表达式
@@ -128,9 +193,10 @@ class Config(object):
             lines = fp.readlines()
 
         process_data = []
-        class_map = {}
-        base_class = '' #当前行所在最顶层的类
-        base_alias = []
+        nest_class = {} #类中包含所有的其他类
+        nest_key = () #当前的根类
+        nest_inherit = {} #类的继承关系
+
         attr_space = -1 #属性对应的缩进
         last_space = -1
         for line_number, line in enumerate(lines):
@@ -182,7 +248,7 @@ class Config(object):
                 if not self._legal_var(key):
                     print('Var is illegal')
                     return False
-                
+
                 operate_type = 'attr'
                 process_data.append((operate_type, line_number, space, key, val))
             else: #类
@@ -190,7 +256,7 @@ class Config(object):
                     if key[0] != '<' or key[-1] != '>': #键值格式不对
                         print('Key is not right')
                         return False
-                
+
                     #类的声明
                     key = key[1:-1].strip()
                     if not key: #键值为空
@@ -202,67 +268,82 @@ class Config(object):
                     class_info, = split_line
                     class_alias = self.BASE_ALIAS #没有别名
                 else:
-                    class_info, class_alias = split_line      
+                    class_info, class_alias = split_line
                     if not self._legal_alias(class_alias): #别名不合法
                         print('Alias is illegal')
                         return False
-                
-                if class_info.endswith(')'):
-                    class_info = class_info[:-1]
 
-                    split_line = self._strip_split(class_info, '(', 1)
-                    if len(split_line) == 1:
-                        print('No ( find')
-                        return False
-                    
-                    class_name, alias_name = split_line
-                    if not self._legal_class(class_name): #类命不合法
-                        print('Class is illegal', class_name)
+                #<T(s)>, T(s), <T(S)>
+                result, class_split = self._split_alias(class_info)
+                if not result:
+                    print(class_split)
+                    return False
+
+                class_name, alias_name = class_split
+                class_key = class_name, class_alias
+
+                #新建类，<T>, <T -> t>, <T(S) -> t>, <T(S(s), t1) -> t2>
+                if space == 0:
+                    nest_key = class_key
+
+                    if class_key in nest_class: #类重复定义
+                        print('Class can not redefine', class_key)
                         return False
 
-                    if not alias_name: #括号里为空
-                        print('Alias is empty')
-                        return False
+                    if alias_name == self.BASE_ALIAS: #没有继承
+                        operate_type = 'aliasclass'
+                        data = class_alias
+                    else: #使用继承关系生成类
+                        cls_list = []
+                        for cls_name in self._strip_split(alias_name, ','):
+                            if self._is_alias(cls_name): #引用自身的别名，<T(t)> => <T(T(t))>
+                                cls_split = (class_name, cls_name)
+                            else:
+                                result, cls_split = self._split_alias(cls_name)
+                                if not result:
+                                    print(cls_split)
+                                    return False
+                            cls_name, cls_alias_name = cls_split
+                            if cls_alias_name != self.BASE_ALIAS:
+                                if cls_split not in nest_class: #未定义的类不能使用别名引用
+                                    print('Alias must exist')
+                                    return False
 
-                    #新建类使用了别名，默认值设为该别名
-                    if space == 0: #新建类不能使用别名索引
-                        cls_list = self._strip_split(alias_name, ',')
-                        for cls_name in cls_list:
-                            if not self._legal_class(cls_name): #类命不合法
-                                print('Class is illegal', cls_name)
-                                return False
+                            cls_list.append(cls_split)
+
+                        #新建的类有继承关系
+                        nest_inherit[class_key] = set(cls_list) #先放进去可以判断继承自身
+                        if not self.is_nest_inherit(nest_inherit, class_key, set(cls_list)):
+                            print('Class inherit is nested')
+                            return False
+
                         #使用cls_list创建名称为class_name的新类
                         operate_type = 'newclass'
                         data = cls_list
-                    else: #别名查找类
-                        if not self._legal_alias(alias_name): #别名索引不合法
-                            print('Alias is illegal')
-                            return False
-                        #查找class_name类中别名为alias_name的子类
-                        operate_type = 'aliasclass'
-                        data = alias_name
-                else:
-                    class_name = class_info
-                    if not self._legal_class(class_name): #类命不合法
-                        print('Class is illegal', class_name)
-                        return False
-                    #普通查找class_name类
-                    operate_type = 'findclass'
-                    data = None
-                
-                if space == 0:
-                    #新建类
-                    if class_name not in class_map: #类尚未新建
-                        class_map[class_name] = {}
-                        class_map[class_name][self.BASE_ALIAS] = None
-                    elif operate_type == 'newclass': #新建类之前不能有该类的其他定义
-                        print('New class must be first')
-                        return False
-                    elif class_alias in class_map[class_name]: #别名相同
-                        print('Class can not redefine', class_name, class_alias)
-                        return False
-                    class_map[class_name][class_alias] = None
 
+                    if class_key not in nest_class: #类尚未新建
+                        nest_class[class_key] = set()
+
+                else: #别名查找类，T(t)
+                    nest_class[nest_key].add(class_key)
+
+                    if not self._legal_alias(alias_name): #别名索引不合法
+                        print('Alias is illegal')
+                        return False
+                    if alias_name != self.BASE_ALIAS:
+                        if class_split not in nest_class: #未定义的类不能使用别名引用
+                            print('Alias must exist')
+                            return False
+
+                    #判断类使用是否循环，如果一个类有继承，则这个类包括它的所有继承
+                    self.is_nest(nest_class, nest_inherit, nest_key, class_key)
+
+                    #查找class_name类中别名为alias_name的子类
+                    operate_type = 'findclass'
+                    data = alias_name
+
+                '''
+                if space == 0:
                     #防止类的嵌套定义，但无法处理循环嵌套
                     if class_alias == self.BASE_ALIAS:
                         base_class = ''
@@ -281,6 +362,7 @@ class Config(object):
                             if alias_name == alias:
                                 print('New class or Alias class can not be subclass')
                                 return False
+                '''
 
                 process_data.append((operate_type, line_number, space, class_name, class_alias, data))
                 attr_space = space + 1
@@ -295,7 +377,6 @@ class Config(object):
                 cursor_node.add((key, val))
             else:
                 class_name, class_alias = line[:2]
-                print(class_name, class_alias)
                 if operate_type == 'newclass':
                     cls_list = line[1]
 
@@ -307,7 +388,7 @@ class Config(object):
                     parent.add_node(node)
 
                 cursor_node = node
-        self.root.show()
+        #self.root.show()
         #print(node_dict)
 
 
