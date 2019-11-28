@@ -51,6 +51,7 @@ class Node(object):
         return node
 
 
+#别名可以转译成self.parent.children[n]的形式（可能影响效率，且结构是静态的）
 class Config(object):
     '''
     <>: 表示根类，用来定义一个类
