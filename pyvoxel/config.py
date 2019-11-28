@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from pyvoxel.manager import Manager
 from pyvoxel.log import Log
+from ast import literal_eval
 
 
 class Node(object):
@@ -52,7 +53,7 @@ class Node(object):
 
 class Config(object):
     '''
-    <>: 表示根类，用来定义或声明一个类
+    <>: 表示根类，用来定义一个类
     ->: 在根类中表示以别名新建已有的类，可以用别名搜索
         在非根类中表示类的索引，该索引在当前根类中生效
     (): 在根类中表示类的继承
@@ -202,6 +203,9 @@ class Config(object):
         nest_class = {} #类中包含所有的其他类
         nest_key = () #当前的根类
         nest_inherit = {} #类的继承关系
+        
+        cite_class = {} #根类内部的引用
+        cite_attr = {} #根类内部的属性
 
         attr_space = -1 #属性对应的缩进
         last_space = -1
@@ -250,8 +254,19 @@ class Config(object):
                 if not self._legal_var(key):
                     return False, line_number, real_line, 'Var is illegal'
 
+                #值是否是python中的常量
+                try:
+                    val = literal_eval(val)
+                    is_expr = False
+                except Exception:
+                    is_expr = True
+
+                #统计类的属性
+                cite_attr.setdefault(nest_key, {})
+                cite_attr[nest_key][key] = (is_expr, val)
+                #属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
                 operate_type = 'attr'
-                process_data.append((operate_type, line_number, space, key, val))
+                process_data.append((operate_type, line_number, space, key, (is_expr, val)))
             else: #类
                 if space == 0:
                     if key[0] != '<' or key[-1] != '>': #键值格式不对
@@ -324,12 +339,15 @@ class Config(object):
                         operate_type = 'newclass'
                         data = cls_list
 
-                    if class_key not in nest_class: #类尚未新建
+                    #类尚未新建，没有子节点的类也需要统计，不能用setdefault
+                    if class_key not in nest_class:
                         nest_class[class_key] = set()
-
                 else: #别名查找类，T(t1) -> t2
                     #T(t1) -> t2，class_split相当于(T, t1)，class_key相当于(T, t2)
                     nest_class[nest_key].add(class_split)
+                    if alias_name != self.BASE_ALIAS: #统计子节点的别名
+                        cite_class.setdefault(nest_key, {})
+                        cite_class[nest_key][alias_name] = class_key
 
                     if not self._legal_alias(alias_name): #别名索引不合法
                         return False, line_number, real_line, 'Alias is illegal'
@@ -344,6 +362,9 @@ class Config(object):
 
                 process_data.append((operate_type, line_number, space, class_name, class_alias, data))
                 attr_space = space + 1
+        
+        #print(cite_class)
+        #print(cite_attr)
 
         cursor_node = self.root #当前节点
         for line in process_data:
@@ -366,11 +387,11 @@ class Config(object):
                     parent.add_node(node)
 
                 cursor_node = node
-        self.root.show()
+        #self.root.show()
         #print(node_dict)
         return True, 0, '', ''
 
 
 if __name__ == '__main__':
-    Manager.auto_load()
+    #Manager.auto_load()
     Config()

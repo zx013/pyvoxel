@@ -4,7 +4,7 @@
     TestWidget02:
 
 <TestWidget(TestPlugin01, TestPlugin02) -> tw1>:
-    name: name01
+    name: None
     info: 'info: data01'
     info: 'info: data02'
 
