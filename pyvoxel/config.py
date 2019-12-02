@@ -25,7 +25,8 @@ class Config(object):
         #tree = ElementTree.parse('config/testconfig.xml')
         #root = tree.getroot()
         self.root = Node('root')
-        self.plugins = Manager.get_plugins() #已有的插件类
+        self.plugins = Manager._instance #已有的插件类
+        self.newclass = {} #配置文件中新建的类
 
         result, line_number, real_line, message = self.load('config/testconfig.vx')
         if not result:
@@ -140,6 +141,15 @@ class Config(object):
                 continue
         #print(nest_set, class_key)
         #print(base_class, base_set, class_key)
+
+    def get_class(self, name):
+        if name in globals():
+            return globals()[name]
+        if name in self.plugins:
+            return self.plugins[name]
+        if name in self.newclass:
+            return self.newclass[name]
+        return None
 
     def analyse(self, expr):
         '''
@@ -266,9 +276,11 @@ class Config(object):
                             return False, line_number, real_line, 'Class must define before use'
 
                     if alias_name == self.BASE_ALIAS: #没有继承
-                        if class_alias == self.BASE_ALIAS: #类没有定义
-                            if class_name not in globals():
+                        if class_alias == self.BASE_ALIAS: #<T>, 类没有定义
+                            if self.get_class(class_name) is None:
                                 return False, line_number, real_line, 'Class not exist'
+                        else: #<T -> t>
+                            pass
                         operate_type = 'aliasclass'
                         data = class_alias
                     else: #使用继承关系生成类
@@ -330,28 +342,39 @@ class Config(object):
                 cursor_node.add((key, val))
             else:
                 class_name, class_alias = line[:2]
+                if class_alias == self.BASE_ALIAS:
+                    class_real_name = class_name
+                else:
+                    class_real_name ='{}_{}'.format(class_name, class_alias)
+
                 if operate_type == 'aliasclass':
                     if class_alias == self.BASE_ALIAS: #<T>
-                        node = globals()[class_name](class_name)
+                        node = self.get_class(class_name)(class_name)
                         #print(class_name, class_alias)
                     else: #<T -> t>
-                        pass
-                if operate_type == 'newclass':
-                    cls_list = [class_name if class_alias == self.BASE_ALIAS else class_name + '_' + class_alias for cls_name, cls_alias in line[2]]
-                    bases = []
-                    print(class_name, cls_list)
+                        base = self.get_class(class_name)
+                        node_type = type(class_real_name, (base,), {})
+                        node = node_type(class_name)
+                        self.newclass[class_real_name] = node_type
+                elif operate_type == 'newclass':
+                    cls_list = [cls_name if cls_alias == self.BASE_ALIAS else '{}_{}'.format(cls_name, cls_alias) for cls_name, cls_alias in line[2]]
+                    cls_list = tuple([self.get_class(cls) for cls in cls_list] + [Node])
+                    #type(class_name + '_' + class_alias, cls_list, {})
+                    node_type = type(class_real_name, cls_list, {})
+                    node = node_type(class_name)
+                    self.newclass[class_real_name] = node_type
+                    print(class_real_name, cls_list)
+                else:
+                    if class_alias == self.BASE_ALIAS:
+                        node = self.get_class(class_name)(class_name)
+                    else:
+                        node = self.get_class(class_name)(class_name, class_alias)
 
                 if space == cursor_space + 1:
                     parent = cursor_node
                 else:
                     parent = cursor_node.prev_node(cursor_space - space + 1)
 
-                if class_alias == self.BASE_ALIAS:
-                    node = type(class_name, (Node,), {})(class_name)
-                    #node = Node(class_name)
-                else:
-                    node = type(class_name + '_' + class_alias, (type(parent),), {})(class_name, class_alias)
-                    #node = Node(class_name, class_alias)
                 parent.add_node(node)
 
                 cursor_node = node
@@ -361,10 +384,14 @@ class Config(object):
 
 
 if __name__ == '__main__':
+    class TestWidget(Node):
+        pass
+    class TestWidget02(Node):
+        pass
     class TestWidget03(Node):
         pass
     
     class TestWidget05(Node):
         pass
-    #Manager.auto_load()
+    Manager.auto_load()
     Config()
