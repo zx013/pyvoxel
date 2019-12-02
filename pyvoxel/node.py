@@ -5,11 +5,15 @@ from pyvoxel.log import Log
 
 #类中attr属性改变时触发on_attr事件，同时同步改变关联的值
 class Node(object):
-    def __init__(self):
+    def __init__(self, name, space):
         self._trigger = {}
         self._reflex = {}
         self.parent = None
         self.children = []
+
+        self.name = name
+        self.space = space
+        self.attr = []
 
     def __setattr__(self, name, value):
         ovalue = self.__dict__.get(name, None)
@@ -40,7 +44,21 @@ class Node(object):
             value = eval(expr, None, local)
             setattr(self, name, value)
         except Exception as ex:
-            Log.error('Sync class data error : ' + str(ex))
+            Log.error(ex)
+
+    def show(self, space=-1):
+        if self.name != 'root':
+            spacesep = '    ' * space
+            print(spacesep + '<' + self.name + '>:')
+            spacesep += '    '
+            for key, val in self.attr:
+                print(spacesep + key + ': ' + str(val))
+        print(self.children)
+        for child in self.children:
+            child.show(space + 1)
+
+    def add(self, attr):
+        self.attr.append(attr)
 
     def add_node(self, node):
         self.children.append(node)
@@ -48,7 +66,18 @@ class Node(object):
             Log.warning('{node} already has parent'.format(node=node))
         node.parent = self
 
-    #base_cls中的base_name字段改变时，同步修改self的name字段
+    #前面num级节点
+    def prev_node(self, num):
+        node = self
+        for i in range(num):
+            node = node.parent
+            if node is None:
+                return None
+        return node
+
+    #新建类中name变量，并将name变量和expr表达式中其他类变量绑定，当其他类变量变化时，同步修改该变量
+    #使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
+    #使用bind绑定时，所有的变量必须可访问
     def bind(self, name, expr):
         if '__import__' in expr: #literal_eval不能设置locals，因此需要对expr进行判断
             print('Expr can not use __import__.')
@@ -57,7 +86,7 @@ class Node(object):
         pattern = {}
         pset = set()
         for i, p in enumerate(re.finditer(u'(?:(?:p|c[0-9]+).)+[a-z0-9_]+', expr, flags=re.I)):
-            iname = 'x{i}'.format(i=i)
+            iname = '_x{i}'.format(i=i)
             pname = p.group()
             if pname in pset: #防止重复定义
                 continue
@@ -71,7 +100,7 @@ class Node(object):
                     elif node[0] in ('C', 'c'):
                         base_cls = base_cls.children[int(node[1:])]
             except Exception as ex:
-                print('Expr error, please check it : ', ex)
+                Log.error(ex)
                 return False
             base_name = plist[-1]
 
@@ -80,16 +109,16 @@ class Node(object):
             expr = expr.replace(pname, iname)
 
         try:
-            local = {}
+            local = {'self': self} #使语句中的self生效
             for base, key in pattern.items():
                 base_cls, base_name = base
                 local[key] = getattr(base_cls, base_name)
             value = eval(expr, None, local)
             setattr(self, name, value)
         except Exception as ex:
-            print('Expr error, please check it : ', ex)
+            Log.error(ex)
             return False
-        
+
         #能够正常获取参数值时，写入配置变量
         for base_cls, base_name in pattern.keys():
             base_cls._trigger.setdefault(base_name, set())
@@ -111,9 +140,10 @@ if __name__ == '__main__':
     t1.testa = 1
     t1.testb = 2
     t3.testc = 3
+    t4.test = 10
 
     t2.bind('testd', 'p.testa + p.testb * p.testb - c0.testc')
-    t4.bind('teste', 'p.p.testd + p.p.p.testa')
+    t4.bind('teste', 'p.p.testd + p.p.p.testa + self.test')
     print(t2.testd, t4.teste)
 
     t1.testa = 4

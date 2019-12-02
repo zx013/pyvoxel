@@ -1,54 +1,7 @@
 # -*- coding: utf-8 -*-
 from pyvoxel.manager import Manager
-from pyvoxel.log import Log
+from pyvoxel.node import Node
 from ast import literal_eval
-
-
-class Node(object):
-    def __init__(self, name, space):
-        self.name = name
-        self.space = space
-        self.attr = []
-
-        self.parent = None
-        self.children = []
-
-    def show(self):
-        if self.name != 'root':
-            space = '    ' * self.space
-            print(space + '<' + self.name + '>:')
-            space += '    '
-            for key, val in self.attr:
-                print(space + key + ': ' + val)
-        for child in self.children:
-            child.show()
-
-    def add(self, attr):
-        self.attr.append(attr)
-
-    def add_node(self, node):
-        self.children.append(node)
-
-        if node.parent:
-            Log.warning('{node} already has parent'.format(node=node))
-        node.parent = self
-
-    #前面num级节点
-    def prev(self, num):
-        node = self
-        for i in range(num):
-            node = node.parent
-            if node is None:
-                return None
-        return node
-
-    #根节点
-    @property
-    def root(self):
-        node = self
-        while node.parent:
-            node = node.parent
-        return node
 
 
 #别名可以转译成self.parent.children[n]的形式（可能影响效率，且结构是静态的）
@@ -73,7 +26,7 @@ class Config(object):
         #root = tree.getroot()
         self.root = Node('root', -1)
         self.plugins = Manager.get_plugins() #已有的插件类
-        
+
         result, line_number, real_line, message = self.load('config/testconfig.vx')
         if not result:
             print(line_number, real_line, message)
@@ -204,7 +157,7 @@ class Config(object):
         nest_class = {} #类中包含所有的其他类
         nest_key = () #当前的根类
         nest_inherit = {} #类的继承关系
-        
+
         cite_class = {} #根类内部的引用
         cite_attr = {} #根类内部的属性
 
@@ -360,12 +313,8 @@ class Config(object):
                     operate_type = 'findclass'
                     data = alias_name
 
-
                 process_data.append((operate_type, line_number, space, class_name, class_alias, data))
                 attr_space = space + 1
-        
-        #print(cite_class)
-        #print(cite_attr)
 
         cursor_node = self.root #当前节点
         for line in process_data:
@@ -384,12 +333,11 @@ class Config(object):
                 if space == cursor_node.space + 1:
                     cursor_node.add_node(node)
                 else:
-                    parent = cursor_node.prev(space - cursor_node.space)
+                    parent = cursor_node.prev_node(space - cursor_node.space)
                     parent.add_node(node)
 
                 cursor_node = node
-        #self.root.show()
-        #print(node_dict)
+        self.root.show()
         return True, 0, '', ''
 
 
