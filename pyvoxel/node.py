@@ -5,14 +5,14 @@ from pyvoxel.log import Log
 
 #类中attr属性改变时触发on_attr事件，同时同步改变关联的值
 class Node(object):
-    def __init__(self, name, space):
+    def __init__(self, name, alias=''):
         self._trigger = {}
         self._reflex = {}
         self.parent = None
         self.children = []
 
         self.name = name
-        self.space = space
+        self.alias = alias
         self.attr = []
 
     def __setattr__(self, name, value):
@@ -49,11 +49,13 @@ class Node(object):
     def show(self, space=-1):
         if self.name != 'root':
             spacesep = '    ' * space
-            print(spacesep + '<' + self.name + '>:')
+            if self.alias:
+                print(spacesep + '<' + self.name + ' -> ' + self.alias + '>:')
+            else:
+                print(spacesep + '<' + self.name + '>:')
             spacesep += '    '
             for key, val in self.attr:
                 print(spacesep + key + ': ' + str(val))
-        print(self.children)
         for child in self.children:
             child.show(space + 1)
 
