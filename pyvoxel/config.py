@@ -3,6 +3,7 @@ from pyvoxel.manager import Manager
 from pyvoxel.node import Node
 from pyvoxel.log import Log
 from ast import literal_eval
+import re
 
 
 #别名可以转译成self.parent.children[n]的形式（可能影响效率，且结构是静态的）
@@ -17,7 +18,7 @@ class Config(object):
     self: 当前类
     '''
     LEGAL_CLASS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    LEGAL_ALIAS = 'abcdefghijklmnopqrstuvwxyz0123456789'
+    LEGAL_ALIAS = 'abcdefghijklmnopqrstuvwxyz0123456789_'
     LEGAL_VAR = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
 
     BASE_ALIAS = '__ALIAS__' #默认别名，使用大写保证和其他别名不相同
@@ -129,7 +130,7 @@ class Config(object):
         if class_alias == self.BASE_ALIAS:
             return class_name
         else:
-            return '{}_{}'.format(class_name, class_alias)
+            return '{}-{}'.format(class_name, class_alias)
 
     def _get_class(self, name):
         if name in self.newclass:
@@ -139,14 +140,6 @@ class Config(object):
         if name in globals():
             return globals()[name]
         return None
-
-    def analyse(self, expr):
-        '''
-        解析表达式
-        '''
-        #root，根节点
-        #self，自身节点
-        pass
 
     def load(self, name):
         with open(name, 'r') as fp:
@@ -218,7 +211,7 @@ class Config(object):
 
                 #统计类的属性，按行号索引
                 cite_cursor.setdefault(cursor_line, {})
-                cite_cursor[cursor_line][key] = (is_expr, val)
+                cite_cursor[cursor_line][key] = (line_number, real_line, is_expr, val)
                 #属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
                 #operate_type = 'attr'
                 #process_data[line_number] = (operate_type, line_number, real_line, space, key, (is_expr, val))
@@ -368,27 +361,31 @@ class Config(object):
                             return True
                 return False
 
-            try:
+            try: #创建节点
                 if not check_parent_class(base): #所有的父类中不存在Node节点
                     base.append(Node)
 
                 #类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
-                ids = cite_class.get(nest_key, {})
+                attr = cite_cursor.get(line_number, {}) #类中的属性，静态类型可继承
+                expr = {} #类中动态属性，继承会导致关系混乱，因此不继承
+                for k, v in attr.items():
+                    linen, liner, is_expr, val = v
+                    if is_expr:
+                        expr[k] = (linen, liner, val) #出错提示
+                    else:
+                        attr[k] = val
+
+                attr['_ids'] = cite_class.get(nest_key, {})
+                node_type = type(class_real_name, tuple(base), attr)
 
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
-                    attr = cite_cursor.get(line_number, {}) #类中的属性
-                    attr['_ids'] = ids
-                    node_type = type(class_real_name, tuple(base), attr)
                     self.newclass[class_real_name] = node_type
-                else:
-                    attr = {}
-                    attr['_ids'] = ids
-                    node_type = type(class_real_name, tuple(base), attr)
                 node = node_type()
+                node._dynamic_expr = expr #尽量不要重复
             except:
                 return False, line_number, real_line, 'Create class failed'
 
-            try:
+            try: #查找父节点
                 parent = cursor_node
                 if space != cursor_space + 1:
                     parent = cursor_node
@@ -398,6 +395,14 @@ class Config(object):
                 parent.add_node(node)
             except:
                 return False, line_number, real_line, 'Add class failed'
+
+            try: #查找根节点
+                rootnode = node
+                while rootnode.parent.parent:
+                    rootnode = rootnode.parent
+                node._ids['root'] = rootnode
+            except:
+                return False, line_number, real_line, 'Get root class failed'
 
             nest_line[line_number] = node
             cursor_node = node
@@ -413,12 +418,26 @@ class Config(object):
 
         #通过索引序列解析属性
         for node, deep in self.root.walk(isroot=False):
-            print(node, node._ids)
+            for key, val in node._dynamic_expr.items():
+                line_number, real_line, expr = val
+                #expr = 'p.p.testa + self.p.testb * p.c12.testb -p.p.p.a + self.c1.testc_9'
+                #for i, p in enumerate(re.finditer('(?:^|[^a-z0-9_.])(?=(?!(self))[a-z_]+[a-z0-9_]*)', expr, flags=re.I)):
+                #    print(p.span(), expr[p.span()[1]])
+                expr = re.sub('[.]p[.]', '.parent.', expr, flags=re.I)
+                expr = re.sub('[.]c([0-9]+)[.]', lambda m: '.children[{}].'.format(m.group(1)), expr, flags=re.I)
+                try:
+                    val = eval(expr, None, node._ids)
+                    setattr(node, key, val)
+                except:
+                    return False, line_number, real_line, 'Analyse expr error'
+                node._dynamic_expr[key] = expr
+            #print(node._dynamic_expr)
 
         #self.root.show()
         return True, 0, '', ''
 
 
+#(?:^|[^a-z0-9_.]))(self|([a-z_]+[a-z0-9_]*))
 if __name__ == '__main__':
     class TestWidget():
         pass
@@ -430,4 +449,3 @@ if __name__ == '__main__':
         pass
     Manager.auto_load()
     config = Config()
-

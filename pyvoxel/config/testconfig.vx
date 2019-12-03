@@ -1,10 +1,4 @@
 
-<TestWidget03>:
-    name: 'test'
-
-<TestWidget01(TestWidget03)>:
-    TestWidget02:
-
 <TestWidget(TestPlugin01, TestPlugin02) -> tw1>:
     name: None
     info: 'info: data01'
@@ -17,12 +11,12 @@
     #TestWidget:
 
 <TestWidget -> tw2>:
-    name: tw3.name
+    name: tw3.p.c0.name
     TestWidget(tw1) -> tw3:
-        name: name02
+        name: 'name02'
 
 <TestWidget -> tw3>:
-    name: name03
+    name: 'name03'
 
 <TestWidget(tw1, tw2) -> tw4>:
 
@@ -31,4 +25,3 @@
     TestWidget(tw2):
     TestWidget(tw3) -> tw2:
     TestWidget:
-    TestWidget01:
