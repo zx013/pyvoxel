@@ -11,7 +11,7 @@
     #TestWidget:
 
 <TestWidget -> tw2>:
-    name: tw3.p.c0.name
+    name: tw3.p.c0.name + c0.name + c0.p.c0.name + self.c0.name + root.c0.name
     TestWidget(tw1) -> tw3:
         name: 'name02'
 

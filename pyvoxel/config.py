@@ -418,15 +418,25 @@ class Config(object):
 
         #通过索引序列解析属性
         for node, deep in self.root.walk(isroot=False):
+            local = dict(node._ids)
+            local['self'] = node
             for key, val in node._dynamic_expr.items():
                 line_number, real_line, expr = val
-                #expr = 'p.p.testa + self.p.testb * p.c12.testb -p.p.p.a + self.c1.testc_9'
-                #for i, p in enumerate(re.finditer('(?:^|[^a-z0-9_.])(?=(?!(self))[a-z_]+[a-z0-9_]*)', expr, flags=re.I)):
-                #    print(p.span(), expr[p.span()[1]])
+
+                #self可省略
+                pattern = '(?:^|[^a-z0-9_.])(?=(?!({}))[a-z_]+[a-z0-9_]*)'.format('|'.join(local.keys()))
+                bypass = 'self.'
+                offset = 0
+                for i, p in enumerate(re.finditer(pattern, expr, flags=re.I)):
+                    index = p.span()[1] + offset
+                    expr = expr[:index] + bypass + expr[index:]
+                    offset += len(bypass)
+
+                #parent缩写为p，children[x]缩写为cx
                 expr = re.sub('[.]p[.]', '.parent.', expr, flags=re.I)
                 expr = re.sub('[.]c([0-9]+)[.]', lambda m: '.children[{}].'.format(m.group(1)), expr, flags=re.I)
                 try:
-                    val = eval(expr, None, node._ids)
+                    val = eval(expr, None, local)
                     setattr(node, key, val)
                 except:
                     return False, line_number, real_line, 'Analyse expr error'
