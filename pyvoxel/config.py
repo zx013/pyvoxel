@@ -3,7 +3,6 @@ from pyvoxel.manager import Manager
 from pyvoxel.node import Node
 from pyvoxel.log import Log
 from ast import literal_eval
-from collections import OrderedDict
 
 
 #别名可以转译成self.parent.children[n]的形式（可能影响效率，且结构是静态的）
@@ -153,7 +152,7 @@ class Config(object):
         with open(name, 'r') as fp:
             lines = fp.readlines()
 
-        process_data = OrderedDict()
+        process_data = []
         nest_class = {} #类中包含所有的其他类
         nest_key = () #当前的根类
         nest_inherit = {} #类的继承关系
@@ -221,8 +220,8 @@ class Config(object):
                 cite_cursor.setdefault(cursor_line, {})
                 cite_cursor[cursor_line][key] = (is_expr, val)
                 #属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
-                operate_type = 'attr'
-                process_data[line_number] = (operate_type, line_number, real_line, space, key, (is_expr, val))
+                #operate_type = 'attr'
+                #process_data[line_number] = (operate_type, line_number, real_line, space, key, (is_expr, val))
             else: #类
                 if space == 0:
                     if key[0] != '<' or key[-1] != '>': #键值格式不对
@@ -324,90 +323,99 @@ class Config(object):
                     operate_type = 'findclass'
                     data = alias_name
 
-                process_data[line_number] = (operate_type, line_number, real_line, space, nest_key, class_name, class_alias, data)
+                process_data.append((operate_type, line_number, real_line, space, nest_key, class_name, class_alias, data))
                 cursor_line = line_number
                 attr_space = space + 1
 
+        nest_line = {} #根节点和行数的对应关系
         cursor_node = self.root #当前节点
         cursor_space = -1
-        for line in process_data.values():
-            operate_type, line_number, real_line, space = line[:4]
-            line = line[4:]
-            if operate_type == 'attr':
-                key, val = line[:2]
-                self.analyse(val)
-                #cursor_node.add((key, val))
+        for line in process_data:
+            operate_type, line_number, real_line, space, nest_key, class_name, class_alias, data = line
+            class_real_name = self._real_name(class_name, class_alias)
+
+            if operate_type == 'baseclass': #<T>
+                base = [self._get_class(class_name)]
+            elif operate_type == 'aliasclass': #<T -> t>
+                base = [self._get_class(class_name)]
+            elif operate_type == 'newclass': #<T(S)>, <T(S) -> t>
+                cls_list = [self._real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
+                base = [self._get_class(cls) for cls in cls_list]
+            elif operate_type == 'findclass': #T(t) -> r
+                base_name = self._real_name(class_name, data)
+                base = [self._get_class(base_name)]
             else:
-                nest_key, class_name, class_alias = line[:3]
-                line = line[3:]
-                class_real_name = self._real_name(class_name, class_alias)
+                return False, line_number, real_line, 'Operate type error'
 
-                if operate_type == 'baseclass': #<T>
-                    base = [self._get_class(class_name)]
-                elif operate_type == 'aliasclass': #<T -> t>
-                    base = [self._get_class(class_name)]
-                elif operate_type == 'newclass': #<T(S)>, <T(S) -> t>
-                    cls_list = [self._real_name(cls_name, cls_alias) for cls_name, cls_alias in line[0]]
-                    base = [self._get_class(cls) for cls in cls_list]
-                elif operate_type == 'findclass': #T(t) -> r
-                    base_name = self._real_name(class_name, line[0])
-                    base = [self._get_class(base_name)]
-                else:
-                    return False, line_number, real_line, 'Operate type error'
+            for b in base:
+                if b is None: #父类不存在
+                    return False, line_number, real_line, 'Base class not exist'
 
-                for b in base:
-                    if b is None: #父类不存在
-                        return False, line_number, real_line, 'Base class not exist'
-
-                def check_parent_class(base, deep=0):
-                    if deep > 32: #类层级太多或者循环继承
-                        return False
-                    if isinstance(base, tuple) or isinstance(base, list):
-                        for b in base:
-                            if check_parent_class(b, deep + 1):
-                                return True
-                    else:
-                        if base == Node:
-                            return True
-                        if base == object:
-                            return False
-                        for b in base.__bases__:
-                            if check_parent_class(b, deep + 1):
-                                return True
+            def check_parent_class(base, deep=0):
+                if deep > 32: #类层级太多或者循环继承
                     return False
+                if isinstance(base, tuple) or isinstance(base, list):
+                    for b in base:
+                        if check_parent_class(b, deep + 1):
+                            return True
+                else:
+                    if base == Node:
+                        return True
+                    if base == object:
+                        return False
+                    for b in base.__bases__:
+                        if check_parent_class(b, deep + 1):
+                            return True
+                return False
 
-                try:
-                    if not check_parent_class(base): #所有的父类中不存在Node节点
-                        base.append(Node)
+            try:
+                if not check_parent_class(base): #所有的父类中不存在Node节点
+                    base.append(Node)
 
+                #类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
+                ids = cite_class.get(nest_key, {})
+
+                if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
                     attr = cite_cursor.get(line_number, {}) #类中的属性
-                    attr['_ids'] = cite_class.get(nest_key, {}) #类中可以使用的索引序列
+                    attr['_ids'] = ids
+                    node_type = type(class_real_name, tuple(base), attr)
+                    self.newclass[class_real_name] = node_type
+                else:
+                    attr = {}
+                    attr['_ids'] = ids
+                    node_type = type(class_real_name, tuple(base), attr)
+                node = node_type()
+            except:
+                return False, line_number, real_line, 'Create class failed'
 
-                    if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
-                        node_type = type(class_real_name, tuple(base), attr)
-                        self.newclass[class_real_name] = node_type
-                    else:
-                        node_type = type(class_real_name, tuple(base), {})
-                    node = node_type()
-                except:
-                    return False, line_number, real_line, 'Create class failed'    
-
-                try:
+            try:
+                parent = cursor_node
+                if space != cursor_space + 1:
                     parent = cursor_node
-                    if space != cursor_space + 1:
-                        parent = cursor_node
-                        for i in range(cursor_space - space + 1):
-                            parent = parent.parent
-    
-                    parent.add_node(node)
-                except:
-                    return False, line_number, real_line, 'Add class failed'    
+                    for i in range(cursor_space - space + 1):
+                        parent = parent.parent
 
-                cursor_node = node
-                cursor_space = space
-        
+                parent.add_node(node)
+            except:
+                return False, line_number, real_line, 'Add class failed'
+
+            nest_line[line_number] = node
+            cursor_node = node
+            cursor_space = space
+
+        #将索引从行号替换成对应节点
+        for node, deep in self.root.walk(isroot=False):
+            for key, ids_line in node._ids.items():
+                if not isinstance(ids_line, int): #节点已经替换
+                    continue
+                node = nest_line[ids_line]
+                node._ids[key] = node
+
         #通过索引序列解析属性
-        self.root.show()
+        for node, deep in self.root.walk(isroot=False):
+            print(node, node._ids)
+
+        #self.root.show()
         return True, 0, '', ''
 
 

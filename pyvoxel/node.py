@@ -42,21 +42,30 @@ class Node(object):
         except Exception as ex:
             Log.error(ex)
 
-    def show(self, space=-1):
-        if self.__class__.__name__ != 'Node':
-            spacesep = '    ' * space
-            print(spacesep + '<' + self.__class__.__name__ + '>:')
+    def _walk(self, deep, isroot=True):
+        if isroot:
+            yield self, deep
+        for child in self.children:
+            for node, node_deep in child._walk(deep + 1):
+                yield node, node_deep
+    
+    def walk(self, isroot=True):
+        for node, deep in self._walk(0, isroot):
+            yield node, deep
+
+    def show(self):
+        for node, deep in self.walk(isroot=False):
+            spacesep = '    ' * (deep - 1)
+            print(spacesep + '<' + node.__class__.__name__ + '>:')
             spacesep += '    '
-            for key in dir(self):
+            for key in dir(node):
                 if key.startswith('_'):
                     continue
-                if hasattr(getattr(self, key), '__call__'):
+                if hasattr(getattr(node, key), '__call__'):
                     continue
                 if key in ('parent', 'children', 'show', 'add_node', 'bind'):
                     continue
-                print(spacesep + key + ': ' + str(getattr(self, key)))
-        for child in self.children:
-            child.show(space + 1)
+                print(spacesep + key + ': ' + str(getattr(node, key)))
 
     def add_node(self, node):
         self.children.append(node)
