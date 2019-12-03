@@ -3,6 +3,7 @@ from pyvoxel.manager import Manager
 from pyvoxel.node import Node
 from pyvoxel.log import Log
 from ast import literal_eval
+from collections import OrderedDict
 
 
 #别名可以转译成self.parent.children[n]的形式（可能影响效率，且结构是静态的）
@@ -108,7 +109,7 @@ class Config(object):
         return True, (name, self.BASE_ALIAS)
 
     #检查继承
-    def is_nest_inherit(self, nest_inherit, class_key, cls_set):
+    def _is_inherit(self, nest_inherit, class_key, cls_set):
         while True:
             class_next = set()
             for cls_key in cls_set:
@@ -125,35 +126,19 @@ class Config(object):
             cls_set = class_next
         return True
 
-    def is_nest(self, nest_class, nest_inherit, nest_key, class_key):
-        nest_set = set()
-        nest_set.add(nest_key)
-        if nest_key in nest_inherit:
-            for nest in nest_inherit[nest_key]:
-                if nest in nest_class:
-                    print('in', nest)
-            nest_set |= nest_inherit[nest_key]
-        if class_key in nest_set:
-            print('err', class_key)
-        for base_class, base_set in nest_class.items():
-            if not base_set:
-                continue
-        #print(nest_set, class_key)
-        #print(base_class, base_set, class_key)
-
-    def real_name(self, class_name, class_alias):
+    def _real_name(self, class_name, class_alias):
         if class_alias == self.BASE_ALIAS:
             return class_name
         else:
             return '{}_{}'.format(class_name, class_alias)
 
-    def get_class(self, name):
-        if name in globals():
-            return globals()[name]
-        if name in self.plugins:
-            return self.plugins[name]
+    def _get_class(self, name):
         if name in self.newclass:
             return self.newclass[name]
+        if name in self.plugins:
+            return self.plugins[name]
+        if name in globals():
+            return globals()[name]
         return None
 
     def analyse(self, expr):
@@ -168,13 +153,15 @@ class Config(object):
         with open(name, 'r') as fp:
             lines = fp.readlines()
 
-        process_data = []
+        process_data = OrderedDict()
         nest_class = {} #类中包含所有的其他类
         nest_key = () #当前的根类
         nest_inherit = {} #类的继承关系
 
+        cursor_line = 0 #当前类所在的行
+
         cite_class = {} #根类内部的引用
-        cite_attr = {} #根类内部的属性
+        cite_cursor = {} #统计所有类的属性，行号索引，类名索引会重复
 
         attr_space = -1 #属性对应的缩进
         last_space = -1
@@ -230,12 +217,12 @@ class Config(object):
                 except Exception:
                     is_expr = True
 
-                #统计类的属性
-                cite_attr.setdefault(nest_key, {})
-                cite_attr[nest_key][key] = (is_expr, val)
+                #统计类的属性，按行号索引
+                cite_cursor.setdefault(cursor_line, {})
+                cite_cursor[cursor_line][key] = (is_expr, val)
                 #属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
                 operate_type = 'attr'
-                process_data.append((operate_type, line_number, real_line, space, key, (is_expr, val)))
+                process_data[line_number] = (operate_type, line_number, real_line, space, key, (is_expr, val))
             else: #类
                 if space == 0:
                     if key[0] != '<' or key[-1] != '>': #键值格式不对
@@ -282,7 +269,7 @@ class Config(object):
 
                     if alias_name == self.BASE_ALIAS: #没有继承
                         if class_alias == self.BASE_ALIAS: #<T>, 类没有定义
-                            if self.get_class(class_name) is None:
+                            if self._get_class(class_name) is None:
                                 return False, line_number, real_line, 'Class not exist'
                             operate_type = 'baseclass'
                             data = None
@@ -307,7 +294,7 @@ class Config(object):
 
                         #新建的类有继承关系
                         nest_inherit[class_key] = set(cls_list) #先放进去可以判断继承自身
-                        if not self.is_nest_inherit(nest_inherit, class_key, set(cls_list)):
+                        if not self._is_inherit(nest_inherit, class_key, set(cls_list)):
                             return False, line_number, real_line, 'Class inherit is nested'
 
                         #使用cls_list创建名称为class_name的新类
@@ -323,9 +310,9 @@ class Config(object):
                         return False, line_number, real_line, 'Class can not use when define'
 
                     nest_class[nest_key].add(class_split)
-                    if alias_name != self.BASE_ALIAS: #统计子节点的别名
+                    if class_alias != self.BASE_ALIAS: #统计子节点的别名
                         cite_class.setdefault(nest_key, {})
-                        cite_class[nest_key][alias_name] = class_key
+                        cite_class[nest_key][class_alias] = line_number #class_split
 
                     if not self._legal_alias(alias_name): #别名索引不合法
                         return False, line_number, real_line, 'Alias is illegal'
@@ -337,32 +324,34 @@ class Config(object):
                     operate_type = 'findclass'
                     data = alias_name
 
-                process_data.append((operate_type, line_number, real_line, space, class_name, class_alias, data))
+                process_data[line_number] = (operate_type, line_number, real_line, space, nest_key, class_name, class_alias, data)
+                cursor_line = line_number
                 attr_space = space + 1
 
         cursor_node = self.root #当前节点
         cursor_space = -1
-        for line in process_data:
+        for line in process_data.values():
             operate_type, line_number, real_line, space = line[:4]
             line = line[4:]
             if operate_type == 'attr':
                 key, val = line[:2]
                 self.analyse(val)
-                cursor_node.add((key, val))
+                #cursor_node.add((key, val))
             else:
-                class_name, class_alias = line[:2]
-                class_real_name = self.real_name(class_name, class_alias)
+                nest_key, class_name, class_alias = line[:3]
+                line = line[3:]
+                class_real_name = self._real_name(class_name, class_alias)
 
                 if operate_type == 'baseclass': #<T>
-                    base = [self.get_class(class_name)]
+                    base = [self._get_class(class_name)]
                 elif operate_type == 'aliasclass': #<T -> t>
-                    base = [self.get_class(class_name)]
+                    base = [self._get_class(class_name)]
                 elif operate_type == 'newclass': #<T(S)>, <T(S) -> t>
-                    cls_list = [self.real_name(cls_name, cls_alias) for cls_name, cls_alias in line[2]]
-                    base = [self.get_class(cls) for cls in cls_list]
+                    cls_list = [self._real_name(cls_name, cls_alias) for cls_name, cls_alias in line[0]]
+                    base = [self._get_class(cls) for cls in cls_list]
                 elif operate_type == 'findclass': #T(t) -> r
-                    base_name = self.real_name(class_name, line[2])
-                    base = [self.get_class(base_name)]
+                    base_name = self._real_name(class_name, line[0])
+                    base = [self._get_class(base_name)]
                 else:
                     return False, line_number, real_line, 'Operate type error'
 
@@ -391,22 +380,33 @@ class Config(object):
                     if not check_parent_class(base): #所有的父类中不存在Node节点
                         base.append(Node)
 
-                    node_type = type(class_real_name, tuple(base), {})
+                    attr = cite_cursor.get(line_number, {}) #类中的属性
+                    attr['_ids'] = cite_class.get(nest_key, {}) #类中可以使用的索引序列
+
+                    if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
+                        node_type = type(class_real_name, tuple(base), attr)
+                        self.newclass[class_real_name] = node_type
+                    else:
+                        node_type = type(class_real_name, tuple(base), {})
                     node = node_type()
                 except:
-                    return False, line_number, real_line, 'Create class failed'
-                if operate_type in ('newclass', 'aliasclass'): #需要新建的类
-                    self.newclass[class_real_name] = node_type
+                    return False, line_number, real_line, 'Create class failed'    
 
-                if space == cursor_space + 1:
+                try:
                     parent = cursor_node
-                else:
-                    parent = cursor_node.prev_node(cursor_space - space + 1)
-
-                parent.add_node(node)
+                    if space != cursor_space + 1:
+                        parent = cursor_node
+                        for i in range(cursor_space - space + 1):
+                            parent = parent.parent
+    
+                    parent.add_node(node)
+                except:
+                    return False, line_number, real_line, 'Add class failed'    
 
                 cursor_node = node
                 cursor_space = space
+        
+        #通过索引序列解析属性
         self.root.show()
         return True, 0, '', ''
 

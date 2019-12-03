@@ -1,5 +1,7 @@
 
 <TestWidget03>:
+    name: 'test'
+
 <TestWidget01(TestWidget03)>:
     TestWidget02:
 

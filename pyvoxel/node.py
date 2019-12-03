@@ -11,8 +11,6 @@ class Node(object):
         self.parent = None
         self.children = []
 
-        self.attr = []
-
     def __setattr__(self, name, value):
         ovalue = self.__dict__.get(name, None)
         self.__dict__[name] = value
@@ -48,33 +46,23 @@ class Node(object):
         if self.__class__.__name__ != 'Node':
             spacesep = '    ' * space
             print(spacesep + '<' + self.__class__.__name__ + '>:')
-            #if self.alias:
-            #    print(spacesep + '<' + self.name + ' -> ' + self.alias + '>:')
-            #else:
-            #    print(spacesep + '<' + self.name + '>:')
             spacesep += '    '
-            for key, val in self.attr:
-                print(spacesep + key + ': ' + str(val))
+            for key in dir(self):
+                if key.startswith('_'):
+                    continue
+                if hasattr(getattr(self, key), '__call__'):
+                    continue
+                if key in ('parent', 'children', 'show', 'add_node', 'bind'):
+                    continue
+                print(spacesep + key + ': ' + str(getattr(self, key)))
         for child in self.children:
             child.show(space + 1)
-
-    def add(self, attr):
-        self.attr.append(attr)
 
     def add_node(self, node):
         self.children.append(node)
         if node.parent:
             Log.warning('{node} already has parent'.format(node=node))
         node.parent = self
-
-    #前面num级节点
-    def prev_node(self, num):
-        node = self
-        for i in range(num):
-            node = node.parent
-            if node is None:
-                return None
-        return node
 
     #新建类中name变量，并将name变量和expr表达式中其他类变量绑定，当其他类变量变化时，同步修改该变量
     #使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
