@@ -24,7 +24,7 @@ class Config(object):
     def __init__(self):
         #tree = ElementTree.parse('config/testconfig.xml')
         #root = tree.getroot()
-        self.root = Node('root')
+        self.root = Node()
         self.plugins = Manager._instance #已有的插件类
         self.newclass = {} #配置文件中新建的类
 
@@ -142,6 +142,12 @@ class Config(object):
         #print(nest_set, class_key)
         #print(base_class, base_set, class_key)
 
+    def real_name(self, class_name, class_alias):
+        if class_alias == self.BASE_ALIAS:
+            return class_name
+        else:
+            return '{}_{}'.format(class_name, class_alias)
+
     def get_class(self, name):
         if name in globals():
             return globals()[name]
@@ -230,7 +236,7 @@ class Config(object):
                 cite_attr[nest_key][key] = (is_expr, val)
                 #属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
                 operate_type = 'attr'
-                process_data.append((operate_type, line_number, space, key, (is_expr, val)))
+                process_data.append((operate_type, line_number, real_line, space, key, (is_expr, val)))
             else: #类
                 if space == 0:
                     if key[0] != '<' or key[-1] != '>': #键值格式不对
@@ -279,10 +285,11 @@ class Config(object):
                         if class_alias == self.BASE_ALIAS: #<T>, 类没有定义
                             if self.get_class(class_name) is None:
                                 return False, line_number, real_line, 'Class not exist'
+                            operate_type = 'baseclass'
+                            data = None
                         else: #<T -> t>
-                            pass
-                        operate_type = 'aliasclass'
-                        data = class_alias
+                            operate_type = 'aliasclass'
+                            data = class_alias
                     else: #使用继承关系生成类
                         cls_list = []
                         for cls_name in self._strip_split(alias_name, ','):
@@ -328,47 +335,59 @@ class Config(object):
                     operate_type = 'findclass'
                     data = alias_name
 
-                process_data.append((operate_type, line_number, space, class_name, class_alias, data))
+                process_data.append((operate_type, line_number, real_line, space, class_name, class_alias, data))
                 attr_space = space + 1
 
         cursor_node = self.root #当前节点
         cursor_space = -1
         for line in process_data:
-            operate_type, line_number, space = line[:3]
-            line = line[3:]
+            operate_type, line_number, real_line, space = line[:4]
+            line = line[4:]
             if operate_type == 'attr':
                 key, val = line[:2]
                 self.analyse(val)
                 cursor_node.add((key, val))
             else:
                 class_name, class_alias = line[:2]
-                if class_alias == self.BASE_ALIAS:
-                    class_real_name = class_name
-                else:
-                    class_real_name ='{}_{}'.format(class_name, class_alias)
+                class_real_name = self.real_name(class_name, class_alias)
 
-                if operate_type == 'aliasclass':
-                    if class_alias == self.BASE_ALIAS: #<T>
-                        node = self.get_class(class_name)(class_name)
-                        #print(class_name, class_alias)
-                    else: #<T -> t>
-                        base = self.get_class(class_name)
-                        node_type = type(class_real_name, (base,), {})
-                        node = node_type(class_name)
-                        self.newclass[class_real_name] = node_type
-                elif operate_type == 'newclass':
-                    cls_list = [cls_name if cls_alias == self.BASE_ALIAS else '{}_{}'.format(cls_name, cls_alias) for cls_name, cls_alias in line[2]]
-                    cls_list = tuple([self.get_class(cls) for cls in cls_list] + [Node])
-                    #type(class_name + '_' + class_alias, cls_list, {})
-                    node_type = type(class_real_name, cls_list, {})
-                    node = node_type(class_name)
-                    self.newclass[class_real_name] = node_type
-                    print(class_real_name, cls_list)
+                if operate_type == 'baseclass': #<T>
+                    base = [self.get_class(class_name)]
+                elif operate_type == 'aliasclass': #<T -> t>
+                    base = [self.get_class(class_name)]
+                elif operate_type == 'newclass': #<T(S)>, <T(S) -> t>
+                    cls_list = [self.real_name(cls_name, cls_alias) for cls_name, cls_alias in line[2]]
+                    base = [self.get_class(cls) for cls in cls_list]
+                elif operate_type == 'findclass': #T(t) -> r
+                    base_name = self.real_name(class_name, line[2])
+                    base = [self.get_class(base_name)]
                 else:
-                    if class_alias == self.BASE_ALIAS:
-                        node = self.get_class(class_name)(class_name)
+                    return False, line_number, real_line, 'Operate type error'
+                
+                def check_parent_class(base, deep=0):
+                    if deep > 32: #类层级太多或者循环继承
+                        return False
+                    if isinstance(base, tuple) or isinstance(base, list):
+                        for b in base:
+                            if check_parent_class(b, deep + 1):
+                                return True
                     else:
-                        node = self.get_class(class_name)(class_name, class_alias)
+                        if base == Node:
+                            return True
+                        if base == object:
+                            return False
+                        for b in base.__bases__:
+                            if check_parent_class(b, deep + 1):
+                                return True
+                    return False
+
+                if not check_parent_class(base): #所有的父类中不存在Node节点
+                    base.append(Node)
+
+                node_type = type(class_real_name, tuple(base), {})
+                node = node_type()
+                if operate_type in ('newclass', 'aliasclass'): #需要新建的类
+                    self.newclass[class_real_name] = node_type
 
                 if space == cursor_space + 1:
                     parent = cursor_node
@@ -379,19 +398,19 @@ class Config(object):
 
                 cursor_node = node
                 cursor_space = space
-        #self.root.show()
+        self.root.show()
         return True, 0, '', ''
 
 
 if __name__ == '__main__':
-    class TestWidget(Node):
+    class TestWidget():
         pass
-    class TestWidget02(Node):
+    class TestWidget02():
         pass
-    class TestWidget03(Node):
+    class TestWidget03():
         pass
-    
-    class TestWidget05(Node):
+    class TestWidget05():
         pass
     Manager.auto_load()
-    Config()
+    config = Config()
+    
