@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from pyvoxel.manager import Manager
 from pyvoxel.node import Node
+from pyvoxel.log import Log
 from ast import literal_eval
 
 
@@ -22,15 +23,13 @@ class Config(object):
     BASE_ALIAS = '__ALIAS__' #默认别名，使用大写保证和其他别名不相同
 
     def __init__(self):
-        #tree = ElementTree.parse('config/testconfig.xml')
-        #root = tree.getroot()
         self.root = Node()
         self.plugins = Manager._instance #已有的插件类
         self.newclass = {} #配置文件中新建的类
 
         result, line_number, real_line, message = self.load('config/testconfig.vx')
         if not result:
-            print(line_number, real_line, message)
+            Log.warning('{} {} {}'.format(line_number, real_line, message))
 
     #分割后去空格
     def _strip_split(self, info, sep, maxsplit=-1):
@@ -320,6 +319,9 @@ class Config(object):
                         nest_class[class_key] = set()
                 else: #别名查找类，T(t1) -> t2
                     #T(t1) -> t2，class_split相当于(T, t1)，class_key相当于(T, t2)
+                    if class_split == nest_key: #类内部不能使用自身
+                        return False, line_number, real_line, 'Class can not use when define'
+
                     nest_class[nest_key].add(class_split)
                     if alias_name != self.BASE_ALIAS: #统计子节点的别名
                         cite_class.setdefault(nest_key, {})
@@ -363,7 +365,11 @@ class Config(object):
                     base = [self.get_class(base_name)]
                 else:
                     return False, line_number, real_line, 'Operate type error'
-                
+
+                for b in base:
+                    if b is None: #父类不存在
+                        return False, line_number, real_line, 'Base class not exist'
+
                 def check_parent_class(base, deep=0):
                     if deep > 32: #类层级太多或者循环继承
                         return False
@@ -381,11 +387,14 @@ class Config(object):
                                 return True
                     return False
 
-                if not check_parent_class(base): #所有的父类中不存在Node节点
-                    base.append(Node)
+                try:
+                    if not check_parent_class(base): #所有的父类中不存在Node节点
+                        base.append(Node)
 
-                node_type = type(class_real_name, tuple(base), {})
-                node = node_type()
+                    node_type = type(class_real_name, tuple(base), {})
+                    node = node_type()
+                except:
+                    return False, line_number, real_line, 'Create class failed'
                 if operate_type in ('newclass', 'aliasclass'): #需要新建的类
                     self.newclass[class_real_name] = node_type
 
@@ -413,4 +422,4 @@ if __name__ == '__main__':
         pass
     Manager.auto_load()
     config = Config()
-    
+
