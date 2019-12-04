@@ -305,6 +305,7 @@ class Config(object):
         else:
             return '{}-{}'.format(class_name, class_alias)
 
+    #获取类，如果类是插件类或外部类，则重建一个替代，newclass中必定为ConfigNode的继承
     def _get_class(self, name):
         cls = None
         if name in self.newclass:
@@ -313,7 +314,7 @@ class Config(object):
             cls = self.plugins[name]
         if name in globals():
             cls = globals()[name]
-        if cls: #新建类不直接使用外部类
+        if cls: #新建配置类不直接使用外部类，防止不必要的初始化，继承类中的静态变量
             attr = {}
             for k, v in cls.__dict__.items():
                 if k.startswith('_'):
@@ -525,27 +526,7 @@ class Config(object):
                 if b is None: #父类不存在
                     return False, line_number, line_real, 'Base class not exist'
 
-            def check_parent_class(base, deep=0):
-                if deep > 32: #类层级太多或者循环继承
-                    return False
-                if isinstance(base, tuple) or isinstance(base, list):
-                    for b in base:
-                        if check_parent_class(b, deep + 1):
-                            return True
-                else:
-                    if base == ConfigNode:
-                        return True
-                    if base == object:
-                        return False
-                    for b in base.__bases__:
-                        if check_parent_class(b, deep + 1):
-                            return True
-                return False
-
             try: #创建节点
-                if not check_parent_class(base): #所有的父类中不存在Node节点
-                    base.append(ConfigNode)
-
                 #类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
                 total_attr = cite_cursor.get(line_number, {}) #类中的属性，静态类型可继承
                 static_attr = {} #静态属性，为python常量
@@ -561,7 +542,6 @@ class Config(object):
                 node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
 
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
-                    print(class_real_name, class_real_name in self.newclass)
                     self.newclass[class_real_name] = node_type
                 node = node_type()
                 node._dynamic_expr = dynamic_expr #尽量不要重复，暂存动态属性
