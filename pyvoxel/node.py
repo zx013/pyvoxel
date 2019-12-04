@@ -76,53 +76,74 @@ class Node(object):
     #新建类中name变量，并将name变量和expr表达式中其他类变量绑定，当其他类变量变化时，同步修改该变量
     #使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
     #使用bind绑定时，所有的变量必须可访问
-    def bind(self, name, expr):
+    def bind(self, name, expr, local={}):
         if '__import__' in expr: #literal_eval不能设置locals，因此需要对expr进行判断
-            print('Expr can not use __import__.')
-            return False
+            return False, 'Expr can not use __import__.'
+        
+        local['self'] = self
+        
+        #self可省略
+        ptn = '(?:^|[^a-z0-9_.])(?=(?!({}))[a-z_]+[a-z0-9_]*)'.format('|'.join(local.keys()))
+        bypass = 'self.'
+        offset = 0
+        for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
+            index = p.span()[1] + offset
+            expr = expr[:index] + bypass + expr[index:]
+            offset += len(bypass)
 
+        #parent缩写为p，children[x]缩写为cx
+        while True:
+            size = len(expr)
+            expr = re.sub('[.]p[.]', '.parent.', expr, flags=re.I)
+            expr = re.sub('[.]c([0-9]+)[.]', lambda m: '.children[{}].'.format(m.group(1)), expr, flags=re.I)
+            if len(expr) == size:
+                break
+
+        ptn = '(?:{}).((?:parent|children\[[0-9]+\]).)*[a-z_]+[a-z0-9_]*'.format('|'.join(local.keys()))
         pattern = {}
         pset = set()
-        for i, p in enumerate(re.finditer(u'(?:(?:p|c[0-9]+).)+[a-z0-9_]+', expr, flags=re.I)):
+        #查找所有变量
+        for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
             iname = '_x{i}'.format(i=i)
             pname = p.group()
             if pname in pset: #防止重复定义
                 continue
 
-            base_cls = self
             plist = pname.split('.')
-            try:
-                for node in plist[:-1]:
-                    if node[0] in ('P', 'p'):
+            try: #定位变量所在的类
+                base_cls = local[plist[0]]
+                for node in plist[1:-1]:
+                    if node.startswith('parent'):
                         base_cls = base_cls.parent
-                    elif node[0] in ('C', 'c'):
-                        base_cls = base_cls.children[int(node[1:])]
-            except Exception as ex:
-                Log.error(ex)
-                return False
+                    elif node.startswith('children'):
+                        base_cls = base_cls.children[int(node.split('[')[1].split(']')[0])]
+            except Exception:
+                return False, 'Analyse attr error'
             base_name = plist[-1]
 
             pset.add(pname)
-            pattern[(base_cls, base_name)] = iname
-            expr = expr.replace(pname, iname)
+            if (base_cls, base_name) in pattern: #相同的变量使用相同的名称
+                expr = expr.replace(pname, pattern[(base_cls, base_name)])
+            else:
+                pattern[(base_cls, base_name)] = iname
+                expr = expr.replace(pname, iname)
 
         try:
-            local = {'self': self} #使语句中的self生效
+            local = {} #使语句中的self生效
             for base, key in pattern.items():
                 base_cls, base_name = base
                 local[key] = getattr(base_cls, base_name)
             value = eval(expr, None, local)
             setattr(self, name, value)
-        except Exception as ex:
-            Log.error(ex)
-            return False
+        except Exception:
+            return False, 'Run expr error'
 
         #能够正常获取参数值时，写入配置变量
         for base_cls, base_name in pattern.keys():
             base_cls._trigger.setdefault(base_name, set())
             base_cls._trigger[base_name].add((self, name))
         self._reflex[name] = (expr, pattern, local)
-        return True
+        return True, 'Success'
 
 
 if __name__ == '__main__':

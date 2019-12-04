@@ -366,22 +366,23 @@ class Config(object):
                     base.append(Node)
 
                 #类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
-                attr = cite_cursor.get(line_number, {}) #类中的属性，静态类型可继承
-                expr = {} #类中动态属性，继承会导致关系混乱，因此不继承
-                for k, v in attr.items():
+                total_attr = cite_cursor.get(line_number, {}) #类中的属性，静态类型可继承
+                static_attr = {} #静态属性，为python常量
+                dynamic_expr = {} #类中动态属性，继承会导致关系混乱，因此不继承
+                for k, v in total_attr.items():
                     linen, liner, is_expr, val = v
                     if is_expr:
-                        expr[k] = (linen, liner, val) #出错提示
+                        dynamic_expr[k] = (linen, liner, val) #出错提示
                     else:
-                        attr[k] = val
+                        static_attr[k] = val
 
-                attr['_ids'] = cite_class.get(nest_key, {})
-                node_type = type(class_real_name, tuple(base), attr)
+                static_attr['_ids'] = cite_class.get(nest_key, {})
+                node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
 
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
                     self.newclass[class_real_name] = node_type
                 node = node_type()
-                node._dynamic_expr = expr #尽量不要重复
+                node._dynamic_expr = dynamic_expr #尽量不要重复，暂存动态属性
             except:
                 return False, line_number, real_line, 'Create class failed'
 
@@ -419,35 +420,22 @@ class Config(object):
         #通过索引序列解析属性
         for node, deep in self.root.walk(isroot=False):
             local = dict(node._ids)
-            local['self'] = node
             for key, val in node._dynamic_expr.items():
                 line_number, real_line, expr = val
 
-                #self可省略
-                pattern = '(?:^|[^a-z0-9_.])(?=(?!({}))[a-z_]+[a-z0-9_]*)'.format('|'.join(local.keys()))
-                bypass = 'self.'
-                offset = 0
-                for i, p in enumerate(re.finditer(pattern, expr, flags=re.I)):
-                    index = p.span()[1] + offset
-                    expr = expr[:index] + bypass + expr[index:]
-                    offset += len(bypass)
-
-                #parent缩写为p，children[x]缩写为cx
-                expr = re.sub('[.]p[.]', '.parent.', expr, flags=re.I)
-                expr = re.sub('[.]c([0-9]+)[.]', lambda m: '.children[{}].'.format(m.group(1)), expr, flags=re.I)
-                try:
-                    val = eval(expr, None, local)
-                    setattr(node, key, val)
-                except:
-                    return False, line_number, real_line, 'Analyse expr error'
-                node._dynamic_expr[key] = expr
-            #print(node._dynamic_expr)
+                result, message = node.bind(key, expr, local)
+                if not result:
+                    return False, line_number, real_line, message
+            delattr(node, '_dynamic_expr')
 
         #self.root.show()
+        print(self.root.children[1].name)
+        self.root.children[1].children[0].name = 'xc'
+        #self.root.show()
+        print(self.root.children[1].name)
         return True, 0, '', ''
 
 
-#(?:^|[^a-z0-9_.]))(self|([a-z_]+[a-z0-9_]*))
 if __name__ == '__main__':
     class TestWidget():
         pass
