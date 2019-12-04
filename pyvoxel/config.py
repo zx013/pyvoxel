@@ -6,6 +6,186 @@ from ast import literal_eval
 import re
 
 
+class ConfigNode(object):
+    def __init__(self):
+        self._trigger = {}
+        self._reflex = {}
+        self.parent = None
+        self.children = []
+
+    def _walk(self, deep, isroot=True):
+        if isroot:
+            yield self, deep
+        for child in self.children:
+            for node, node_deep in child._walk(deep + 1):
+                yield node, node_deep
+
+    def walk(self, isroot=True):
+        for node, deep in self._walk(0, isroot):
+            yield node, deep
+
+    def show(self):
+        for node, deep in self.walk(isroot=False):
+            spacesep = '    ' * (deep - 1)
+            print(spacesep + '<' + node.__class__.__name__ + '>:')
+            spacesep += '    '
+            for key in dir(node):
+                if key.startswith('_'):
+                    continue
+                if hasattr(getattr(node, key), '__call__'):
+                    continue
+                if key in ('parent', 'children', 'show', 'add_node', 'bind'):
+                    continue
+                print(spacesep + key + ': ' + str(getattr(node, key)))
+
+    def add_node(self, node):
+        self.children.append(node)
+        if node.parent:
+            Log.warning('{node} already has parent'.format(node=node))
+        node.parent = self
+
+    #新建类中name变量，并将name变量和expr表达式中其他类变量绑定，当其他类变量变化时，同步修改该变量
+    #使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
+    #使用bind绑定时，所有的变量必须可访问
+    def bind(self, name, expr, local={}):
+        if '__import__' in expr: #literal_eval不能设置locals，因此需要对expr进行判断
+            return False, 'Expr can not use __import__.'
+
+        local['self'] = self
+
+        #表达式中的字符串不参与匹配，解析表达式中的字符串
+        cursor = None
+        sinfo = []
+        begin = 0
+        backslash = False
+        size = len(expr)
+        n = 0
+        while n < size:
+            if cursor is None:
+                if expr[n: n + 3] in ("'''", '"""'):
+                    cursor = expr[n: n + 3]
+                    begin = n
+                    n += 3
+                    continue
+                if expr[n] in ("'", '"'): #进入字符串
+                    cursor = expr[n]
+                    begin = n
+            elif backslash: #转义字符
+                backslash = False
+            elif expr[n] == '\\': #反斜杠
+                backslash = True
+            elif cursor in ("'''", '"""') and expr[n: n + 3] == cursor:
+                cursor = None
+                n += 3
+                sinfo.append((begin, n, 3))
+                continue
+            elif cursor in ("'", '"') and expr[n] == cursor:
+                cursor = None
+                n += 1
+                sinfo.append((begin, n, 1))
+                continue
+            n += 1
+
+        #替换字符串
+        smap = {}
+        offset = 0
+        for i, (begin, end, c) in enumerate(sinfo):
+            sname = '_s{i}'.format(i=i)
+            sval = expr[begin + offset:end + offset]
+            expr = expr.replace(sval, sname, 1)
+            smap[sname] = sval
+            offset -= len(sval) - len(sname)
+
+        #self可省略
+        ptn = '(?:^|[^a-z0-9_.])(?=(?!({}))[a-z_]+[a-z0-9_]*)'.format('|'.join(local.keys() | smap.keys()))
+        bypass = 'self.'
+        offset = 0
+        for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
+            index = p.span()[1] + offset
+            expr = expr[:index] + bypass + expr[index:]
+            offset += len(bypass)
+
+        #parent缩写为p，children[x]缩写为cx
+        while True:
+            size = len(expr)
+            expr = re.sub('[.]p[.]', '.parent.', expr, flags=re.I)
+            expr = re.sub('[.]c([0-9]+)[.]', lambda m: '.children[{}].'.format(m.group(1)), expr, flags=re.I)
+            if len(expr) == size:
+                break
+
+        ptn = '(?:{}).((?:parent|children\[[0-9]+\]).)*[a-z_]+[a-z0-9_]*'.format('|'.join(local.keys()))
+        pattern = {}
+        pset = []
+        #查找所有变量
+        offset = 0
+        for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
+            iname = '_x{i}'.format(i=i)
+            pname = p.group()
+            if pname in pset: #防止重复定义
+                continue
+
+            plist = pname.split('.')
+            try: #定位变量所在的类
+                rname = '' #逆向索引字符串
+                base_cls = local[plist[0]]
+                for node in plist[1:-1]:
+                    if node.startswith('parent'):
+                        for n, c in enumerate(base_cls.parent.children):
+                            if c == base_cls:
+                                break
+                        rname = '.children[{}]'.format(n) + rname
+                        base_cls = base_cls.parent
+                    elif node.startswith('children'):
+                        rname = '.parent' + rname
+                        base_cls = base_cls.children[int(node.split('[')[1].split(']')[0])]
+                rname = 'self' + rname
+            except Exception:
+                return False, 'Analyse attr error'
+            base_name = plist[-1]
+
+            pset.append(pname)
+            base_key = (base_cls, base_name)
+            if base_key in pattern: #相同的变量使用相同的名称
+                iname, _, _ = pattern[base_key]
+            else:
+                pn = '.'.join(plist[:-1]).replace('self.', '').replace('self', '').replace('parent', 'p').replace('children', 'c').replace('[', '').replace(']', '')
+                rn = rname.replace('self.', '').replace('self', '').replace('parent', 'p').replace('children', 'c').replace('[', '').replace(']', '')
+                pattern[base_key] = iname, pn, rn
+
+            #不能直接用replace，会有名称部分包含的情况
+            sindex = p.span()[0] + offset
+            eindex = p.span()[1] + offset
+            expr = expr[:sindex] + iname + expr[eindex:]
+            offset -= len(pname) - len(iname)
+
+        #将标识替换回字符串
+        for sname, sval in smap.items(): #似乎可以不用按照从小到大的顺序
+            expr = expr.replace(sname, sval, 1)
+
+        try:
+            local = {} #使语句中的self生效
+            for key, val in pattern.items():
+                base_cls, base_name = key
+                iname, pname, rname = val
+                local[iname] = getattr(base_cls, base_name)
+            value = eval(expr, None, local)
+            setattr(self, name, value)
+        except Exception as ex:
+            print(expr, ex)
+            return False, 'Run expr error'
+
+        #能够正常获取参数值时，写入配置变量
+        reflex = {}
+        for key, val in pattern.items():
+            base_cls, base_name = key
+            iname, pname, rname = val
+            base_cls._trigger.setdefault(base_name, set())
+            base_cls._trigger[base_name].add(rname + name)
+            reflex[pname + base_name] = iname
+        self._reflex[name] = (expr, reflex, local)
+        return True, 'Success'
+
+
 #别名可以转译成self.parent.children[n]的形式（可能影响效率，且结构是静态的）
 class Config(object):
     '''
@@ -137,7 +317,7 @@ class Config(object):
         return None
 
     def _load(self, lines):
-        root = Node() #根节点
+        root = ConfigNode() #根节点
 
         process_data = []
         nest_class = {} #类中包含所有的其他类
@@ -346,7 +526,7 @@ class Config(object):
                         if check_parent_class(b, deep + 1):
                             return True
                 else:
-                    if base == Node:
+                    if base == ConfigNode:
                         return True
                     if base == object:
                         return False
@@ -357,7 +537,7 @@ class Config(object):
 
             try: #创建节点
                 if not check_parent_class(base): #所有的父类中不存在Node节点
-                    base.append(Node)
+                    base.append(ConfigNode)
 
                 #类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
                 total_attr = cite_cursor.get(line_number, {}) #类中的属性，静态类型可继承
@@ -422,6 +602,9 @@ class Config(object):
                     return False, line_number, line_real, message
             delattr(node, '_dynamic_expr')
 
+        for node, deep in root.walk(isroot=False):
+            print(node._trigger, node._reflex)
+
         return True, 0, '', root
 
     def load(self, data):
@@ -452,9 +635,9 @@ if __name__ == '__main__':
         pass
     Manager.auto_load()
     config = Config()
-    root = config.load('config/testconfig.vx')
+    tree = config.load('config/testconfig.vx')
     #root.show()
-    print(root.children[1].name)
-    root.children[1].children[0].name = 'xc'
+    print(tree.children[1].name)
+    tree.children[1].children[0].name = 'xc'
     #root.show()
-    print(root.children[1].name)
+    print(tree.children[1].name)

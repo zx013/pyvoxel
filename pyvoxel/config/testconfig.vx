@@ -11,10 +11,13 @@
     #TestWidget:
 
 <TestWidget -> tw2>:
-    name: tw3.name + c0.name + c0.p.c0.name + self.c0.name + root.c0.name + info
+    name: 'g\'h"\""i{}{}'.format(self.c0.name, '''xc''') + tw3.name + c0.c0.name + c0.p.c0.name + info + info1
     info: 'abc'
+    info1: 'def'
     TestWidget(tw1) -> tw3:
         name: 'name02'
+        TestWidget:
+            name: 'name03'
 
 <TestWidget -> tw3>:
     name: 'name03'
