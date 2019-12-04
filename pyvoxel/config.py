@@ -44,7 +44,6 @@ class ConfigNode(object):
             Log.warning('{node} already has parent'.format(node=node))
         node.parent = self
 
-    #新建类中name变量，并将name变量和expr表达式中其他类变量绑定，当其他类变量变化时，同步修改该变量
     #使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
     #使用bind绑定时，所有的变量必须可访问
     def bind(self, name, expr, local={}):
@@ -54,11 +53,10 @@ class ConfigNode(object):
         local['self'] = self
 
         #表达式中的字符串不参与匹配，解析表达式中的字符串
-        cursor = None
-        sinfo = []
-        begin = 0
-        backslash = False
-        size = len(expr)
+        cursor = None #字符串起始标识
+        sinfo = [] #字符串起始位置
+        backslash = False #反斜杠
+        size = len(expr) #字符串长度
         n = 0
         while n < size:
             if cursor is None:
@@ -77,19 +75,19 @@ class ConfigNode(object):
             elif cursor in ("'''", '"""') and expr[n: n + 3] == cursor:
                 cursor = None
                 n += 3
-                sinfo.append((begin, n, 3))
+                sinfo.append((begin, n))
                 continue
             elif cursor in ("'", '"') and expr[n] == cursor:
                 cursor = None
                 n += 1
-                sinfo.append((begin, n, 1))
+                sinfo.append((begin, n))
                 continue
             n += 1
 
         #替换字符串
         smap = {}
         offset = 0
-        for i, (begin, end, c) in enumerate(sinfo):
+        for i, (begin, end) in enumerate(sinfo):
             sname = '_s{i}'.format(i=i)
             sval = expr[begin + offset:end + offset]
             expr = expr.replace(sval, sname, 1)
@@ -159,7 +157,7 @@ class ConfigNode(object):
             offset -= len(pname) - len(iname)
 
         #将标识替换回字符串
-        for sname, sval in smap.items(): #似乎可以不用按照从小到大的顺序
+        for sname, sval in smap.items(): #似乎可以不用按照从小到大的顺序，更大的索引不会匹配到更小的索引
             expr = expr.replace(sname, sval, 1)
 
         try:
@@ -180,8 +178,8 @@ class ConfigNode(object):
             base_cls, base_name = key
             iname, pname, rname = val
             base_cls._trigger.setdefault(base_name, set())
-            base_cls._trigger[base_name].add(rname + name)
-            reflex[pname + base_name] = iname
+            base_cls._trigger[base_name].add('{}.{}'.format(rname, name) if rname else name)
+            reflex['{}.{}'.format(pname, base_name) if pname else base_name] = iname
         self._reflex[name] = (expr, reflex, local)
         return True, 'Success'
 
@@ -308,13 +306,22 @@ class Config(object):
             return '{}-{}'.format(class_name, class_alias)
 
     def _get_class(self, name):
+        cls = None
         if name in self.newclass:
             return self.newclass[name]
         if name in self.plugins:
-            return self.plugins[name]
+            cls = self.plugins[name]
         if name in globals():
-            return globals()[name]
-        return None
+            cls = globals()[name]
+        if cls: #新建类不直接使用外部类
+            attr = {}
+            for k, v in cls.__dict__.items():
+                if k.startswith('_'):
+                    continue
+                attr[k] = v
+            cls = type(name, (ConfigNode,), attr)
+            self.newclass[name] = cls
+        return cls
 
     def _load(self, lines):
         root = ConfigNode() #根节点
@@ -554,6 +561,7 @@ class Config(object):
                 node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
 
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
+                    print(class_real_name, class_real_name in self.newclass)
                     self.newclass[class_real_name] = node_type
                 node = node_type()
                 node._dynamic_expr = dynamic_expr #尽量不要重复，暂存动态属性
@@ -625,14 +633,11 @@ class Config(object):
 
 
 if __name__ == '__main__':
-    class TestWidget():
+    class TestWidget(object):
         pass
-    class TestWidget02():
-        pass
-    class TestWidget03():
-        pass
-    class TestWidget05():
-        pass
+    class TestWidget05(object):
+        def testwidget05(self):
+            pass
     Manager.auto_load()
     config = Config()
     tree = config.load('config/testconfig.vx')
@@ -641,3 +646,5 @@ if __name__ == '__main__':
     tree.children[1].children[0].name = 'xc'
     #root.show()
     print(tree.children[1].name)
+    
+    tw = TestWidget05()

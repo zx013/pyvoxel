@@ -11,7 +11,7 @@
     #TestWidget:
 
 <TestWidget -> tw2>:
-    name: 'g\'h"\""i{}{}'.format(self.c0.name, '''xc''') + tw3.name + c0.c0.name + c0.p.c0.name + info + info1
+    name: {'g\'h"\""i{}{}'.format(self.c0.name, '''xc'''): tw3.name, c0.c0.name: [c0.p.c0.name + info + info1]}
     info: 'abc'
     info1: 'def'
     TestWidget(tw1) -> tw3:
