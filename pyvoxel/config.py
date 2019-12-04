@@ -24,13 +24,8 @@ class Config(object):
     BASE_ALIAS = '__ALIAS__' #默认别名，使用大写保证和其他别名不相同
 
     def __init__(self):
-        self.root = Node()
         self.plugins = Manager._instance #已有的插件类
         self.newclass = {} #配置文件中新建的类
-
-        result, line_number, real_line, message = self.load('config/testconfig.vx')
-        if not result:
-            Log.warning('{} {} {}'.format(line_number, real_line, message))
 
     #分割后去空格
     def _strip_split(self, info, sep, maxsplit=-1):
@@ -141,9 +136,8 @@ class Config(object):
             return globals()[name]
         return None
 
-    def load(self, name):
-        with open(name, 'r') as fp:
-            lines = fp.readlines()
+    def _load(self, lines):
+        root = Node() #根节点
 
         process_data = []
         nest_class = {} #类中包含所有的其他类
@@ -158,7 +152,7 @@ class Config(object):
         attr_space = -1 #属性对应的缩进
         last_space = -1
         for line_number, line in enumerate(lines):
-            real_line = line.replace('\r', '').replace('\n', '') #原始行，用于出错时的返回
+            line_real = line.strip('\r').strip('\n') #原始行，用于出错时的返回
             line_number += 1 #行号
 
             #计算开头空格数
@@ -178,29 +172,29 @@ class Config(object):
                 continue
 
             if space % 4 != 0: #缩进不是4的倍数
-                return False, line_number, real_line, 'Invalid indentation, must be a multiple of 4 spaces'
+                return False, line_number, line_real, 'Invalid indentation, must be a multiple of 4 spaces'
 
             space = int(space / 4)
 
             if space - last_space >= 2: #缩进跳跃太多，防止一次多2个缩进
-                return False, line_number, real_line, 'Unindent does not match any outer indentation level'
+                return False, line_number, line_real, 'Unindent does not match any outer indentation level'
             last_space = space
 
 
             split_line = self._strip_split(line, ':', 1)
             if len(split_line) == 1: #其他的语法
-                return False, line_number, real_line, 'Other'
+                return False, line_number, line_real, 'Other'
 
             key, val = split_line
             if not key: #键值为空
-                return False, line_number, real_line, 'Key is empty'
+                return False, line_number, line_real, 'Key is empty'
 
             if val: #定义属性
                 if space != attr_space: #属性值必须跟在类定义后面
-                    return False, line_number, real_line, 'Attribute must follow class'
+                    return False, line_number, line_real, 'Attribute must follow class'
 
                 if not self._legal_var(key):
-                    return False, line_number, real_line, 'Var is illegal'
+                    return False, line_number, line_real, 'Var is illegal'
 
                 #值是否是python中的常量
                 try:
@@ -211,19 +205,19 @@ class Config(object):
 
                 #统计类的属性，按行号索引
                 cite_cursor.setdefault(cursor_line, {})
-                cite_cursor[cursor_line][key] = (line_number, real_line, is_expr, val)
+                cite_cursor[cursor_line][key] = (line_number, line_real, is_expr, val)
                 #属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
                 #operate_type = 'attr'
-                #process_data[line_number] = (operate_type, line_number, real_line, space, key, (is_expr, val))
+                #process_data[line_number] = (operate_type, line_number, line_real, space, key, (is_expr, val))
             else: #类
                 if space == 0:
                     if key[0] != '<' or key[-1] != '>': #键值格式不对
-                        return False, line_number, real_line, 'Key is not right'
+                        return False, line_number, line_real, 'Key is not right'
 
                     #类的声明
                     key = key[1:-1].strip()
                     if not key: #键值为空
-                        return False, line_number, real_line, 'Class is empty'
+                        return False, line_number, line_real, 'Class is empty'
 
                 split_line = self._strip_split(key, '->', 1) #解析别名
                 if len(split_line) == 1:
@@ -232,12 +226,12 @@ class Config(object):
                 else:
                     class_info, class_alias = split_line
                     if not self._legal_alias(class_alias): #别名不合法
-                        return False, line_number, real_line, 'Alias is illegal'
+                        return False, line_number, line_real, 'Alias is illegal'
 
                 #<T(s)>, T(s), <T(S)>
                 result, class_split = self._split_alias(class_info)
                 if not result:
-                    return False, line_number, real_line, class_split
+                    return False, line_number, line_real, class_split
 
                 class_name, alias_name = class_split
                 class_key = class_name, class_alias
@@ -247,22 +241,22 @@ class Config(object):
                     nest_key = class_key
 
                     if class_key in nest_class: #类重复定义
-                        return False, line_number, real_line, 'Class can not redefine'
+                        return False, line_number, line_real, 'Class can not redefine'
 
                     #类定义需要在继承类之前（或者为外部类）
                     for inherit_set in nest_inherit.values():
                         if class_key in inherit_set:
-                            return False, line_number, real_line, 'Class must define before inherit'
+                            return False, line_number, line_real, 'Class must define before inherit'
 
                     #类定义需要在使用类之前
                     for nest_set in nest_class.values():
                         if class_key in nest_set:
-                            return False, line_number, real_line, 'Class must define before use'
+                            return False, line_number, line_real, 'Class must define before use'
 
                     if alias_name == self.BASE_ALIAS: #没有继承
                         if class_alias == self.BASE_ALIAS: #<T>, 类没有定义
                             if self._get_class(class_name) is None:
-                                return False, line_number, real_line, 'Class not exist'
+                                return False, line_number, line_real, 'Class not exist'
                             operate_type = 'baseclass'
                             data = None
                         else: #<T -> t>
@@ -276,18 +270,18 @@ class Config(object):
                             else:
                                 result, cls_split = self._split_alias(cls_name)
                                 if not result:
-                                    return False, line_number, real_line, cls_split
+                                    return False, line_number, line_real, cls_split
                             cls_name, cls_alias_name = cls_split
                             if cls_alias_name != self.BASE_ALIAS:
                                 if cls_split not in nest_class: #未定义的类不能使用别名引用
-                                    return False, line_number, real_line, 'Alias must exist'
+                                    return False, line_number, line_real, 'Alias must exist'
 
                             cls_list.append(cls_split)
 
                         #新建的类有继承关系
                         nest_inherit[class_key] = set(cls_list) #先放进去可以判断继承自身
                         if not self._is_inherit(nest_inherit, class_key, set(cls_list)):
-                            return False, line_number, real_line, 'Class inherit is nested'
+                            return False, line_number, line_real, 'Class inherit is nested'
 
                         #使用cls_list创建名称为class_name的新类
                         operate_type = 'newclass'
@@ -299,7 +293,7 @@ class Config(object):
                 else: #别名查找类，T(t1) -> t2
                     #T(t1) -> t2，class_split相当于(T, t1)，class_key相当于(T, t2)
                     if class_split == nest_key: #类内部不能使用自身
-                        return False, line_number, real_line, 'Class can not use when define'
+                        return False, line_number, line_real, 'Class can not use when define'
 
                     nest_class[nest_key].add(class_split)
                     if class_alias != self.BASE_ALIAS: #统计子节点的别名
@@ -307,24 +301,24 @@ class Config(object):
                         cite_class[nest_key][class_alias] = line_number #class_split
 
                     if not self._legal_alias(alias_name): #别名索引不合法
-                        return False, line_number, real_line, 'Alias is illegal'
+                        return False, line_number, line_real, 'Alias is illegal'
                     if alias_name != self.BASE_ALIAS:
                         if class_split not in nest_class: #未定义的类不能使用别名引用
-                            return False, line_number, real_line, 'Alias must exist'
+                            return False, line_number, line_real, 'Alias must exist'
 
                     #查找class_name类中别名为alias_name的子类
                     operate_type = 'findclass'
                     data = alias_name
 
-                process_data.append((operate_type, line_number, real_line, space, nest_key, class_name, class_alias, data))
+                process_data.append((operate_type, line_number, line_real, space, nest_key, class_name, class_alias, data))
                 cursor_line = line_number
                 attr_space = space + 1
 
         nest_line = {} #根节点和行数的对应关系
-        cursor_node = self.root #当前节点
+        cursor_node = root #当前节点
         cursor_space = -1
         for line in process_data:
-            operate_type, line_number, real_line, space, nest_key, class_name, class_alias, data = line
+            operate_type, line_number, line_real, space, nest_key, class_name, class_alias, data = line
             class_real_name = self._real_name(class_name, class_alias)
 
             if operate_type == 'baseclass': #<T>
@@ -338,11 +332,11 @@ class Config(object):
                 base_name = self._real_name(class_name, data)
                 base = [self._get_class(base_name)]
             else:
-                return False, line_number, real_line, 'Operate type error'
+                return False, line_number, line_real, 'Operate type error'
 
             for b in base:
                 if b is None: #父类不存在
-                    return False, line_number, real_line, 'Base class not exist'
+                    return False, line_number, line_real, 'Base class not exist'
 
             def check_parent_class(base, deep=0):
                 if deep > 32: #类层级太多或者循环继承
@@ -384,7 +378,7 @@ class Config(object):
                 node = node_type()
                 node._dynamic_expr = dynamic_expr #尽量不要重复，暂存动态属性
             except:
-                return False, line_number, real_line, 'Create class failed'
+                return False, line_number, line_real, 'Create class failed'
 
             try: #查找父节点
                 parent = cursor_node
@@ -395,7 +389,7 @@ class Config(object):
 
                 parent.add_node(node)
             except:
-                return False, line_number, real_line, 'Add class failed'
+                return False, line_number, line_real, 'Add class failed'
 
             try: #查找根节点
                 rootnode = node
@@ -403,14 +397,14 @@ class Config(object):
                     rootnode = rootnode.parent
                 node._ids['root'] = rootnode
             except:
-                return False, line_number, real_line, 'Get root class failed'
+                return False, line_number, line_real, 'Get root class failed'
 
             nest_line[line_number] = node
             cursor_node = node
             cursor_space = space
 
         #将索引从行号替换成对应节点
-        for node, deep in self.root.walk(isroot=False):
+        for node, deep in root.walk(isroot=False):
             for key, ids_line in node._ids.items():
                 if not isinstance(ids_line, int): #节点已经替换
                     continue
@@ -418,22 +412,33 @@ class Config(object):
                 node._ids[key] = node
 
         #通过索引序列解析属性
-        for node, deep in self.root.walk(isroot=False):
+        for node, deep in root.walk(isroot=False):
             local = dict(node._ids)
             for key, val in node._dynamic_expr.items():
-                line_number, real_line, expr = val
+                line_number, line_real, expr = val
 
                 result, message = node.bind(key, expr, local)
                 if not result:
-                    return False, line_number, real_line, message
+                    return False, line_number, line_real, message
             delattr(node, '_dynamic_expr')
 
-        #self.root.show()
-        print(self.root.children[1].name)
-        self.root.children[1].children[0].name = 'xc'
-        #self.root.show()
-        print(self.root.children[1].name)
-        return True, 0, '', ''
+        return True, 0, '', root
+
+    def load(self, data):
+        try:
+            if '\n' not in data or '\r' not in data: #字符串
+                with open(data, 'r') as fp:
+                    data = fp.read()
+            data = data.replace('\r', '\n').replace('\n\n', '\n')
+            lines = data.split('\n')
+            result, line_number, line_real, message = self._load(lines)
+            if not result:
+                Log.error('{} {} {}'.format(line_number, line_real, message))
+                return None
+        except Exception as ex:
+            Log.error(ex)
+            return None
+        return message
 
 
 if __name__ == '__main__':
@@ -447,3 +452,9 @@ if __name__ == '__main__':
         pass
     Manager.auto_load()
     config = Config()
+    root = config.load('config/testconfig.vx')
+    #root.show()
+    print(root.children[1].name)
+    root.children[1].children[0].name = 'xc'
+    #root.show()
+    print(root.children[1].name)
