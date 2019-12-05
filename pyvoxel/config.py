@@ -1,11 +1,73 @@
 # -*- coding: utf-8 -*-
 from pyvoxel.manager import Manager
-from pyvoxel.node import Node
+#from pyvoxel.node import Node
 from pyvoxel.log import Log
 from ast import literal_eval
 import re
 
+#类中attr属性改变时触发on_attr事件，同时同步改变关联的值
+class Node(object):
+    def __new__(cls): #不用在子类中调用super初始化
+        cls._init(cls)
+        return super().__new__(cls)
 
+    def _init(cls):
+        cls._trigger = {}
+        cls._reflex = {}
+        cls.parent = None
+        cls.children = []
+        if not hasattr(cls, '_base'):
+            return
+
+        name, base = getattr(cls, '_base')
+        print(base[name])
+        node = base[name]
+        
+        for child in node.children:
+            pass
+            #child_node = base[child.__class__.__name__]
+
+
+    def __setattr__(self, name, value):
+        ovalue = self.__dict__.get(name, None)
+        self.__dict__[name] = value
+
+        try:
+            self._on_func(name, ovalue, value)
+        except Exception as ex:
+            Log.error(ex)
+
+    #调用on_函数
+    def _on_func(self, name, ovalue, value):
+        on_name = 'on_' + name
+        if on_name in self.__dict__:
+            on_func = self.__dict__[on_name]
+            on_func(ovalue, value)
+
+        if name in self._trigger:
+            for node, nname in self._trigger[name]:
+                node._update_value(nname, (self, name), value)
+
+    #更新关联类的值
+    def _update_value(self, name, base, basev):
+        try:
+            expr, pattern, local = self._reflex[name]
+            local[pattern[base]] = basev
+
+            value = eval(expr, None, local)
+            setattr(self, name, value)
+        except Exception as ex:
+            Log.error(ex)
+
+    def add_node(self, node):
+        self.children.append(node)
+        if node.parent:
+            Log.warning('{node} already has parent'.format(node=node))
+        node.parent = self
+
+
+#使用配置树的模式可以检查配置的有效性，不生成类结构会导致只能在运行时检查配置的有效性
+#运行前检测配置可能降低一些灵活性，但代码安全性会有很大的提高
 class ConfigNode(object):
     def __init__(self):
         self._trigger = {}
@@ -184,7 +246,6 @@ class ConfigNode(object):
         return True, 'Success'
 
 
-#别名可以转译成self.parent.children[n]的形式（可能影响效率，且结构是静态的）
 class Config(object):
     '''
     <>: 表示根类，用来定义一个类
@@ -200,10 +261,13 @@ class Config(object):
     LEGAL_VAR = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
 
     BASE_ALIAS = '__ALIAS__' #默认别名，使用大写保证和其他别名不相同
+    CLASS_SPLIT = '-' #类和别名之间的分割符
 
     def __init__(self):
         self.plugins = Manager._instance #已有的插件类
         self.newclass = {} #配置文件中新建的类
+        self.otherclass = {} #没有被新建的插件类或外部类
+        self.newnode = {}
 
     #分割后去空格
     def _strip_split(self, info, sep, maxsplit=-1):
@@ -303,13 +367,15 @@ class Config(object):
         if class_alias == self.BASE_ALIAS:
             return class_name
         else:
-            return '{}-{}'.format(class_name, class_alias)
+            return '{}{}{}'.format(class_name, self.CLASS_SPLIT, class_alias)
 
     #获取类，如果类是插件类或外部类，则重建一个替代，newclass中必定为ConfigNode的继承
     def _get_class(self, name):
         cls = None
-        if name in self.newclass:
+        if name in self.newclass: #先查找新建的类
             return self.newclass[name]
+        if name in self.otherclass:
+            return self.otherclass[name]
         if name in self.plugins:
             cls = self.plugins[name]
         if name in globals():
@@ -321,7 +387,7 @@ class Config(object):
                     continue
                 attr[k] = v
             cls = type(name, (ConfigNode,), attr)
-            self.newclass[name] = cls
+            self.otherclass[name] = cls
         return cls
 
     def _load(self, lines):
@@ -541,9 +607,11 @@ class Config(object):
                 static_attr['_ids'] = cite_class.get(nest_key, {})
                 node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
 
+                node = node_type()
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
                     self.newclass[class_real_name] = node_type
-                node = node_type()
+                    self.newnode[class_real_name] = node
+
                 node._dynamic_expr = dynamic_expr #尽量不要重复，暂存动态属性
             except:
                 return False, line_number, line_real, 'Create class failed'
@@ -593,6 +661,42 @@ class Config(object):
         for node, deep in root.walk(isroot=False):
             print(node._trigger, node._reflex)
 
+        def check_parent_class(base, deep=0):
+            if deep > 32: #类层级太多或者循环继承
+                return False
+            if base == Node:
+                return True
+            if base == object:
+                return False
+            for b in base.__bases__:
+                if check_parent_class(b, deep + 1):
+                    return True
+            return False
+
+        #导入全局变量
+        for node_name in self.newclass.keys():
+            if self.CLASS_SPLIT in node_name:
+                continue
+
+            #插件类或外部类，将类与节点绑定，类初始化时按照配置树的结构初始类的成员变量
+            if node_name in globals():
+                node_type = globals()[node_name]
+            elif node_name in self.plugins:
+                node_type = self.plugins[node_name]
+
+            #根据的父类和属性重新生成类
+            base_list = []
+            for base in node_type.__bases__:
+                if base == object:
+                    continue
+                base_list.append(base)
+            if not check_parent_class(node_type): #父类中不存在Node节点
+                base_list.append(Node)
+
+            base_attr = dict(node_type.__dict__)
+            base_attr['_base'] = node_name, self.newnode
+            globals()[node_name] = type(node_name, tuple(base_list), base_attr)
+
         return True, 0, '', root
 
     def load(self, data):
@@ -615,16 +719,20 @@ class Config(object):
 if __name__ == '__main__':
     class TestWidget(object):
         pass
+
     class TestWidget05(object):
+        def __init__(self):
+            print('init')
+
         def testwidget05(self):
             pass
     Manager.auto_load()
     config = Config()
     tree = config.load('config/testconfig.vx')
     #root.show()
-    print(tree.children[1].name)
+    print(tree.children[2].name)
     tree.children[1].children[0].name = 'xc'
     #root.show()
-    print(tree.children[1].name)
-    
-    tw = TestWidget05()
+    print(tree.children[2].name)
+
+    tw1 = TestWidget05()

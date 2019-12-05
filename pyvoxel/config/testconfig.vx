@@ -1,4 +1,4 @@
-
+<TestPlugin01>:
 <TestWidget(TestPlugin01, TestPlugin02) -> tw1>:
     name: None
     info: 'info: data01'

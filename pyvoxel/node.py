@@ -4,11 +4,13 @@ from pyvoxel.log import Log
 
 #类中attr属性改变时触发on_attr事件，同时同步改变关联的值
 class Node(object):
-    def __init__(self):
-        self._trigger = {}
-        self._reflex = {}
-        self.parent = None
-        self.children = []
+    def __new__(cls): #不用在子类中调用super初始化
+        cls._trigger = {}
+        cls._reflex = {}
+        cls.parent = None
+        cls.children = []
+        print('node new')
+        return super().__new__(cls)
 
     def __setattr__(self, name, value):
         ovalue = self.__dict__.get(name, None)
@@ -46,11 +48,6 @@ class Node(object):
         if node.parent:
             Log.warning('{node} already has parent'.format(node=node))
         node.parent = self
-
-    #新建类中name变量，并将name变量和expr表达式中其他类变量绑定，当其他类变量变化时，同步修改该变量
-    #使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
-    #使用bind绑定时，所有的变量必须可访问
-    
 
 
 if __name__ == '__main__':
