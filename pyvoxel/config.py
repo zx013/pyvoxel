@@ -22,7 +22,7 @@ class Node(object):
         name, base = getattr(cls, '_base')
         print(base[name])
         node = base[name]
-        
+
         for child in node.children:
             pass
             #child_node = base[child.__class__.__name__]
@@ -246,35 +246,22 @@ class ConfigNode(object):
         return True, 'Success'
 
 
-class Config(object):
-    '''
-    <>: 表示根类，用来定义一个类
-    ->: 在根类中表示以别名新建已有的类，可以用别名搜索
-        在非根类中表示类的索引，该索引在当前根类中生效
-    (): 在根类中表示类的继承
-        在非根类中通过不同的别名使用根类
-    root: 根类中所有元素使用root访问该类
-    self: 当前类
-    '''
+class ConfigMethod(object):
     LEGAL_CLASS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     LEGAL_ALIAS = 'abcdefghijklmnopqrstuvwxyz0123456789_'
     LEGAL_VAR = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
 
     BASE_ALIAS = '__ALIAS__' #默认别名，使用大写保证和其他别名不相同
-    CLASS_SPLIT = '-' #类和别名之间的分割符
-
-    def __init__(self):
-        self.plugins = Manager._instance #已有的插件类
-        self.newclass = {} #配置文件中新建的类
-        self.otherclass = {} #没有被新建的插件类或外部类
-        self.newnode = {}
+    CLASS_SPLIT = '-' #类和别名之间的分割符必须是非法的别名字符
 
     #分割后去空格
-    def _strip_split(self, info, sep, maxsplit=-1):
+    @staticmethod
+    def strip_split(info, sep, maxsplit=-1):
         return [s.strip() for s in info.split(sep, maxsplit)]
 
     #类名称是否合法
-    def _legal_class(self, class_name):
+    @classmethod
+    def legal_class(self, class_name):
         if not class_name: #名称为空
             return False
         if class_name[0] not in self.LEGAL_CLASS: #首字母不是大写
@@ -285,7 +272,8 @@ class Config(object):
         return True
 
     #判断是否是别名
-    def _is_alias(self, name):
+    @classmethod
+    def is_alias(self, name):
         if not name:
             return False
         if name == self.BASE_ALIAS:
@@ -295,7 +283,8 @@ class Config(object):
         return True
 
     #判断别名是否合法
-    def _legal_alias(self, alias_name):
+    @classmethod
+    def legal_alias(self, alias_name):
         if not alias_name:
             return False
         if alias_name == self.BASE_ALIAS: #默认别名
@@ -305,18 +294,9 @@ class Config(object):
                 return False
         return True
 
-    def _check_class(self, class_name, plugins):
-        #类名称不合法
-        if not self._legal_class(class_name):
-            return False
-
-        #类不存在
-        if class_name not in self.plugins and class_name not in plugins:
-            return False
-        return True
-
     #判断变量是否合法
-    def _legal_var(self, var_name):
+    @classmethod
+    def legal_var(self, var_name):
         if not var_name: #名称为空
             return False
         for s in var_name:
@@ -324,16 +304,17 @@ class Config(object):
                 return ''
         return True
 
-    def _split_alias(self, name):
+    @classmethod
+    def split_alias(self, name):
         if name.endswith(')'):
             name = name[:-1]
 
-            split_line = self._strip_split(name, '(', 1)
+            split_line = self.strip_split(name, '(', 1)
             if len(split_line) == 1:
                 return False, 'No ( find'
 
             class_name, alias_name = split_line
-            if not self._legal_class(class_name): #类命不合法
+            if not self.legal_class(class_name): #类命不合法
                 return False, 'Class is illegal ' + str(class_name)
 
             if not alias_name: #括号里为空
@@ -341,12 +322,13 @@ class Config(object):
 
             return True, (class_name, alias_name)
 
-        if not self._legal_class(name): #类命不合法
+        if not self.legal_class(name): #类命不合法
             return False, 'Class is illegal ' + str(name)
         return True, (name, self.BASE_ALIAS)
 
     #检查继承
-    def _is_inherit(self, nest_inherit, class_key, cls_set):
+    @staticmethod
+    def is_inherit(nest_inherit, class_key, cls_set):
         while True:
             class_next = set()
             for cls_key in cls_set:
@@ -363,37 +345,47 @@ class Config(object):
             cls_set = class_next
         return True
 
-    def _real_name(self, class_name, class_alias):
+    @classmethod
+    def real_name(self, class_name, class_alias):
         if class_alias == self.BASE_ALIAS:
             return class_name
         else:
             return '{}{}{}'.format(class_name, self.CLASS_SPLIT, class_alias)
 
-    #获取类，如果类是插件类或外部类，则重建一个替代，newclass中必定为ConfigNode的继承
-    def _get_class(self, name):
-        cls = None
-        if name in self.newclass: #先查找新建的类
-            return self.newclass[name]
-        if name in self.otherclass:
-            return self.otherclass[name]
-        if name in self.plugins:
-            cls = self.plugins[name]
-        if name in globals():
-            cls = globals()[name]
-        if cls: #新建配置类不直接使用外部类，防止不必要的初始化，继承类中的静态变量
-            attr = {}
-            for k, v in cls.__dict__.items():
-                if k.startswith('_'):
-                    continue
-                attr[k] = v
-            cls = type(name, (ConfigNode,), attr)
-            self.otherclass[name] = cls
-        return cls
+    #获取类，类是否是配置中新建的类，类的定义
+    @classmethod
+    def get_class(self, name, sconfig, config):
+        if name in config['newclass']: #先查找新建的类
+            return True, config['newclass'][name]
+        if name in config['otherclass']:
+            return True, config['otherclass'][name]
+        if name in sconfig['plugins']:
+            return False, sconfig['plugins'][name]
+        if name in sconfig['globals']:
+            return False, sconfig['globals'][name]
+        return False, None
 
-    def _load(self, lines):
+class Config(object):
+    '''
+    <>: 表示根类，用来定义一个类
+    ->: 在根类中表示以别名新建已有的类，可以用别名搜索
+        在非根类中表示类的索引，该索引在当前根类中生效
+    (): 在根类中表示类的继承
+        在非根类中通过不同的别名使用根类
+    root: 根类中所有元素使用root访问该类
+    self: 当前类
+    '''
+
+    def _load(self, lines, sconfig):
+        config = {
+            'newclass': {}, #配置文件中新建的类
+            'otherclass': {}, #没有被新建的插件类或外部类
+            'newnode': {}
+        }
+
         root = ConfigNode() #根节点
 
-        process_data = []
+        process_data = [] #预处理后的数据
         nest_class = {} #类中包含所有的其他类
         nest_key = () #当前的根类
         nest_inherit = {} #类的继承关系
@@ -435,7 +427,7 @@ class Config(object):
             last_space = space
 
 
-            split_line = self._strip_split(line, ':', 1)
+            split_line = ConfigMethod.strip_split(line, ':', 1)
             if len(split_line) == 1: #其他的语法
                 return False, line_number, line_real, 'Other'
 
@@ -447,7 +439,7 @@ class Config(object):
                 if space != attr_space: #属性值必须跟在类定义后面
                     return False, line_number, line_real, 'Attribute must follow class'
 
-                if not self._legal_var(key):
+                if not ConfigMethod.legal_var(key):
                     return False, line_number, line_real, 'Var is illegal'
 
                 #值是否是python中的常量
@@ -473,17 +465,17 @@ class Config(object):
                     if not key: #键值为空
                         return False, line_number, line_real, 'Class is empty'
 
-                split_line = self._strip_split(key, '->', 1) #解析别名
+                split_line = ConfigMethod.strip_split(key, '->', 1) #解析别名
                 if len(split_line) == 1:
                     class_info, = split_line
-                    class_alias = self.BASE_ALIAS #没有别名
+                    class_alias = ConfigMethod.BASE_ALIAS #没有别名
                 else:
                     class_info, class_alias = split_line
-                    if not self._legal_alias(class_alias): #别名不合法
+                    if not ConfigMethod.legal_alias(class_alias): #别名不合法
                         return False, line_number, line_real, 'Alias is illegal'
 
                 #<T(s)>, T(s), <T(S)>
-                result, class_split = self._split_alias(class_info)
+                result, class_split = ConfigMethod.split_alias(class_info)
                 if not result:
                     return False, line_number, line_real, class_split
 
@@ -507,9 +499,10 @@ class Config(object):
                         if class_key in nest_set:
                             return False, line_number, line_real, 'Class must define before use'
 
-                    if alias_name == self.BASE_ALIAS: #没有继承
-                        if class_alias == self.BASE_ALIAS: #<T>, 类没有定义
-                            if self._get_class(class_name) is None:
+                    if alias_name == ConfigMethod.BASE_ALIAS: #没有继承
+                        if class_alias == ConfigMethod.BASE_ALIAS: #<T>, 类没有定义
+                            _, class_type = ConfigMethod.get_class(class_name, sconfig, config)
+                            if class_type is None:
                                 return False, line_number, line_real, 'Class not exist'
                             operate_type = 'baseclass'
                             data = None
@@ -518,15 +511,15 @@ class Config(object):
                             data = class_alias
                     else: #使用继承关系生成类
                         cls_list = []
-                        for cls_name in self._strip_split(alias_name, ','):
-                            if self._is_alias(cls_name): #引用自身的别名，<T(t)> => <T(T(t))>
+                        for cls_name in ConfigMethod.strip_split(alias_name, ','):
+                            if ConfigMethod.is_alias(cls_name): #引用自身的别名，<T(t)> => <T(T(t))>
                                 cls_split = (class_name, cls_name)
                             else:
-                                result, cls_split = self._split_alias(cls_name)
+                                result, cls_split = ConfigMethod.split_alias(cls_name)
                                 if not result:
                                     return False, line_number, line_real, cls_split
                             cls_name, cls_alias_name = cls_split
-                            if cls_alias_name != self.BASE_ALIAS:
+                            if cls_alias_name != ConfigMethod.BASE_ALIAS:
                                 if cls_split not in nest_class: #未定义的类不能使用别名引用
                                     return False, line_number, line_real, 'Alias must exist'
 
@@ -534,7 +527,7 @@ class Config(object):
 
                         #新建的类有继承关系
                         nest_inherit[class_key] = set(cls_list) #先放进去可以判断继承自身
-                        if not self._is_inherit(nest_inherit, class_key, set(cls_list)):
+                        if not ConfigMethod.is_inherit(nest_inherit, class_key, set(cls_list)):
                             return False, line_number, line_real, 'Class inherit is nested'
 
                         #使用cls_list创建名称为class_name的新类
@@ -550,13 +543,13 @@ class Config(object):
                         return False, line_number, line_real, 'Class can not use when define'
 
                     nest_class[nest_key].add(class_split)
-                    if class_alias != self.BASE_ALIAS: #统计子节点的别名
+                    if class_alias != ConfigMethod.BASE_ALIAS: #统计子节点的别名
                         cite_class.setdefault(nest_key, {})
                         cite_class[nest_key][class_alias] = line_number #class_split
 
-                    if not self._legal_alias(alias_name): #别名索引不合法
+                    if not ConfigMethod.legal_alias(alias_name): #别名索引不合法
                         return False, line_number, line_real, 'Alias is illegal'
-                    if alias_name != self.BASE_ALIAS:
+                    if alias_name != ConfigMethod.BASE_ALIAS:
                         if class_split not in nest_class: #未定义的类不能使用别名引用
                             return False, line_number, line_real, 'Alias must exist'
 
@@ -573,24 +566,34 @@ class Config(object):
         cursor_space = -1
         for line in process_data:
             operate_type, line_number, line_real, space, nest_key, class_name, class_alias, data = line
-            class_real_name = self._real_name(class_name, class_alias)
+            class_real_name = ConfigMethod.real_name(class_name, class_alias)
 
             if operate_type == 'baseclass': #<T>
-                base = [self._get_class(class_name)]
+                base_dict = {class_name: ConfigMethod.get_class(class_name, sconfig, config)}
             elif operate_type == 'aliasclass': #<T -> t>
-                base = [self._get_class(class_name)]
+                base_dict = {class_name: ConfigMethod.get_class(class_name, sconfig, config)}
             elif operate_type == 'newclass': #<T(S)>, <T(S) -> t>
-                cls_list = [self._real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
-                base = [self._get_class(cls) for cls in cls_list]
+                cls_list = [ConfigMethod.real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
+                base_dict = {cls_name: ConfigMethod.get_class(cls_name, sconfig, config) for cls_name in cls_list}
             elif operate_type == 'findclass': #T(t) -> r
-                base_name = self._real_name(class_name, data)
-                base = [self._get_class(base_name)]
+                base_name = ConfigMethod.real_name(class_name, data)
+                base_dict = {base_name: ConfigMethod.get_class(base_name, sconfig, config)}
             else:
                 return False, line_number, line_real, 'Operate type error'
 
-            for b in base:
-                if b is None: #父类不存在
+            base = []
+            for name, (iscls, cls) in base_dict.items():
+                if cls is None: #父类不存在
                     return False, line_number, line_real, 'Base class not exist'
+                if not iscls: #新建配置类不直接使用外部类，防止不必要的初始化，继承类中的静态变量
+                    attr = {}
+                    for k, v in cls.__dict__.items():
+                        if k.startswith('_'):
+                            continue
+                        attr[k] = v
+                    cls = type(name, (ConfigNode,), attr) #cls.__name__可能会被修改
+                    config['otherclass'][name] = cls
+                base.append(cls)
 
             try: #创建节点
                 #类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
@@ -609,11 +612,12 @@ class Config(object):
 
                 node = node_type()
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
-                    self.newclass[class_real_name] = node_type
-                    self.newnode[class_real_name] = node
+                    config['newclass'][class_real_name] = node_type
+                    config['newnode'][class_real_name] = node
 
                 node._dynamic_expr = dynamic_expr #尽量不要重复，暂存动态属性
             except:
+                Log.exception()
                 return False, line_number, line_real, 'Create class failed'
 
             try: #查找父节点
@@ -674,15 +678,15 @@ class Config(object):
             return False
 
         #导入全局变量
-        for node_name in self.newclass.keys():
-            if self.CLASS_SPLIT in node_name:
+        for node_name in config['newclass'].keys():
+            if ConfigMethod.CLASS_SPLIT in node_name:
                 continue
 
             #插件类或外部类，将类与节点绑定，类初始化时按照配置树的结构初始类的成员变量
             if node_name in globals():
                 node_type = globals()[node_name]
-            elif node_name in self.plugins:
-                node_type = self.plugins[node_name]
+            elif node_name in sconfig['plugins']:
+                node_type = sconfig['plugins'][node_name]
 
             #根据的父类和属性重新生成类
             base_list = []
@@ -694,24 +698,29 @@ class Config(object):
                 base_list.append(Node)
 
             base_attr = dict(node_type.__dict__)
-            base_attr['_base'] = node_name, self.newnode
+            base_attr['_base'] = node_name, config['newnode']
             globals()[node_name] = type(node_name, tuple(base_list), base_attr)
 
         return True, 0, '', root
 
     def load(self, data):
+        sconfig = {
+            'globals': globals(),
+            'plugins': Manager._instance, #已有的插件类
+        }
+
         try:
             if '\n' not in data or '\r' not in data: #字符串
                 with open(data, 'r') as fp:
                     data = fp.read()
             data = data.replace('\r', '\n').replace('\n\n', '\n')
             lines = data.split('\n')
-            result, line_number, line_real, message = self._load(lines)
+            result, line_number, line_real, message = self._load(lines, sconfig)
             if not result:
                 Log.error('{} {} {}'.format(line_number, line_real, message))
                 return None
-        except Exception as ex:
-            Log.error(ex)
+        except Exception:
+            Log.exception()
             return None
         return message
 
