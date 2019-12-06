@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
+import traceback
 from pyvoxel.pattern.singleton import Singleton
 
 class LogBase(logging.Logger, Singleton):
@@ -15,6 +16,9 @@ class LogBase(logging.Logger, Singleton):
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(self.formatter)
         self.addHandler(stream_handler)
+
+    def exception(self):
+        self.critical('\n' + traceback.format_exc())
 
 Log = LogBase(name='voxel', level=logging.DEBUG)
 
