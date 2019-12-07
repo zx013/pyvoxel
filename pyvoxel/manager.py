@@ -7,30 +7,60 @@ from pyvoxel.log import Log
 
 
 class ManagerBase(Singleton):
+    _instance = {}
+    _plugin_dir = 'plugins' #用户的插件目录
+
+    _base_plugins = set() #默认插件列表
+    _plugins = set() #自定义插件列表
+
     def __init__(self):
-        self._instance = {}
-        self._plugin_dir = 'plugins' #用户的插件目录
+        self.auto_scan()
+
+    #所有的插件
+    @property
+    def plugins(self):
+        return self.plugins_loaded | self.plugins_unload
+
+    #已加载的插件
+    @property
+    def plugins_loaded(self):
+        return set(self._instance)
+
+    #未加载的插件
+    @property
+    def plugins_unload(self):
+        return self._base_plugins | self._plugins
+
+    def auto_scan(self):
+        '''
+        自动扫描目录
+        '''
+        plugins_loaded = {plugin.lower() for plugin in self.plugins_loaded}
+
+        #获取默认插件
+        from pyvoxel import plugins
+        base_plugin_dir = os.path.dirname(plugins.__file__)
+        base_plugins = self.scan_plugin(base_plugin_dir)
+        for plugin in base_plugins:
+            if plugin.lower() in plugins_loaded:
+                continue
+            self._base_plugins.add(plugin)
+
+        #用户插件
+        plugins = self.scan_plugin(self._plugin_dir)
+        for plugin in plugins:
+            if plugin.lower() in plugins_loaded:
+                continue
+            self._plugins.add(plugin)
 
     def auto_load(self):
         '''
         自动加载所有插件，先加载默认插件，再加载用户插件，有名称相同的则覆盖
         '''
-        #获取默认插件
-        from pyvoxel import plugins
-        base_plugin_dir = os.path.dirname(plugins.__file__)
-        base_plugin_list = self.scan_plugin(base_plugin_dir)
-        
-        #用户插件
-        plugin_list = self.scan_plugin(self._plugin_dir)
 
         #被覆盖的插件不重复加载
-        for base_plugin_name in base_plugin_list - plugin_list:
-            self.load_plugin(base_plugin_name, isbase=True)
-
-        for plugin_name in plugin_list:
-            if not self.load_plugin(plugin_name, isbase=False): #加载失败则加载默认的
-                if plugin_name in base_plugin_list:
-                    self.load_plugin(plugin_name, isbase=True)
+        for name in self.plugins_unload:
+            self.load_plugin(name)
 
     def scan_plugin(self, plugin_dir):
         '''
@@ -41,7 +71,7 @@ class ManagerBase(Singleton):
             return set()
         return {name for name in os.listdir(plugin_dir) if not name.startswith('__')}
 
-    def load_plugin(self, name, isbase=False):
+    def _load_plugin(self, name, isbase=False):
         '''
         加载插件，插件文件名和目录需要小写，加载插件时名称忽略大小写，最好使用插件主类的名称
         '''
@@ -52,7 +82,7 @@ class ManagerBase(Singleton):
 
         try:
             Log.debug('Load plugin <{name}>'.format(name=name))
-            
+
             if isbase:
                 plugin = importlib.import_module('pyvoxel.{plugin_dir}.{name}.{name}'.format(plugin_dir=self._plugin_dir, name=name_lower)) #导入默认模块
             else:
@@ -67,6 +97,11 @@ class ManagerBase(Singleton):
             instance = getattr(plugin, class_name) #获取模块中的类
             if class_name in self._instance:
                 del self._instance[class_name]
+
+            if name in self._base_plugins: #有重复插件需要同时删除
+                self._base_plugins.remove(name)
+            if name in self._plugins:
+                self._plugins.remove(name)
             self._instance[class_name] = instance
             Log.debug('Plugin <{name} - {path}> loaded'.format(name=name, path=instance.__module__.split('.', 1)[0]))
             return True
@@ -74,8 +109,13 @@ class ManagerBase(Singleton):
             Log.error('Plugin <{name}> load failed - {ex}'.format(name=name, ex=ex))
             return False
 
-    def get_plugins(self):
-        return set(self._instance.keys())
+    def load_plugin(self, name):
+        if name in self._plugins:
+            if self._load_plugin(name, isbase=False): #加载失败则加载默认的
+                return True
+        if name in self._base_plugins:
+            return self._load_plugin(name, isbase=True)
+        return False
 
     #实例化插件
     def __call__(self, name):
@@ -92,5 +132,5 @@ Manager = ManagerBase()
 if __name__ == '__main__':
     Manager.auto_load()
     Manager.load_plugin('TestPlugin_no')
-    
+
     print(Manager('TestPlugin01').test())
