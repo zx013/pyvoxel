@@ -242,6 +242,9 @@ class ConfigNode(object):
     #使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
     #使用bind绑定时，所有的变量必须可访问
     def bind(self, name, expr, local={}):
+        if hasattr(self, name): #静态变量已通过继承生成
+            return True, 'Static'
+
         if '__import__' in expr: #literal_eval不能设置locals，因此需要对expr进行判断
             return False, 'Expr can not use __import__.'
 
@@ -456,16 +459,9 @@ class Config(object):
                 if not ConfigMethod.legal_var(key):
                     return False, (line_number, line_real, 'Var is illegal')
 
-                #值是否是python中的常量
-                try:
-                    val = literal_eval(val)
-                    is_expr = False
-                except Exception:
-                    is_expr = True
-
                 #统计类的属性，按行号索引
                 cite_cursor.setdefault(cursor_line, {})
-                cite_cursor[cursor_line][key] = (line_number, line_real, is_expr, val)
+                cite_cursor[cursor_line][key] = (line_number, line_real, val)
                 #属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
                 #operate_type = 'attr'
                 #process_data[line_number] = (operate_type, line_number, line_real, space, key, (is_expr, val))
@@ -611,18 +607,21 @@ class Config(object):
 
             try: #创建节点
                 #类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
-                total_attr = cite_cursor.get(line_number, {}) #类中的属性，静态类型可继承
+                class_attr = cite_cursor.get(line_number, {}) #类中的属性，静态类型可继承
+
                 static_attr = {} #静态属性，为python常量
                 dynamic_expr = {} #类中动态属性，继承会导致关系混乱，因此不继承
-                for k, v in total_attr.items():
-                    linen, liner, is_expr, val = v
-                    if is_expr:
-                        dynamic_expr[k] = (linen, liner, val) #出错提示
-                    else:
+                for k, v in class_attr.items():
+                    linen, liner, expr = v
+                    #值是否是python中的常量
+                    try:
+                        expr = literal_eval(expr)
                         static_attr[k] = val
+                    except:
+                        dynamic_expr[k] = (linen, liner, expr) #出错提示
 
                 static_attr['_ids'] = cite_class.get(nest_key, {})
-                
+
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
                     node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
 
@@ -636,7 +635,7 @@ class Config(object):
 
                     node = node_type()
 
-                node._dynamic_expr = dynamic_expr #尽量不要重复，暂存动态属性
+                node._class_attr = class_attr #尽量不要重复，暂存动态属性
             except:
                 Log.exception()
                 return False, (line_number, line_real, 'Create class failed')
@@ -659,6 +658,7 @@ class Config(object):
                     rootnode = rootnode.parent
                 node._ids['root'] = rootnode
             except:
+                Log.exception()
                 return False, (line_number, line_real, 'Get root class failed')
 
             nest_line[line_number] = node
@@ -676,13 +676,13 @@ class Config(object):
         #通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
             local = dict(node._ids)
-            for key, val in node._dynamic_expr.items():
+            for key, val in node._class_attr.items():
                 line_number, line_real, expr = val
 
                 is_success, message = node.bind(key, expr, local)
                 if not is_success:
                     return False, (line_number, line_real, message)
-            delattr(node, '_dynamic_expr')
+            delattr(node, '_class_attr')
 
         return True, (root, config)
 
