@@ -1,6 +1,10 @@
+#已有类添加属性
 <TestPlugin01>:
-<TestWidget(TestPlugin01, TestPlugin02) -> tw1>:
-    name: None
+    name: 'testplugin01'
+
+#继承生成类，不能和已有类冲突
+<TestWidget1(TestPlugin01, TestPlugin02) -> tw1>:
+    name: 'testwidget-tw1'
     info: 'info: data01'
     info: 'info: data02'
 
@@ -10,22 +14,23 @@
     TestPlugin01:
     #TestWidget:
 
+#使用类的别名
 <TestWidget -> tw2>:
     name: {'g\'h"\""i{}{}'.format(self.c0.name, '''xc'''): tw3.name, c0.c0.name: [c0.p.c0.name + info + info1]}
     info: 'abc'
     info1: 'def'
-    TestWidget(tw1) -> tw3:
+    TestWidget1(tw1) -> tw3:
         name: 'name02'
-        TestWidget:
+        TestWidget1(tw1):
             name: 'name03'
 
 <TestWidget -> tw3>:
     name: 'name03'
 
-<TestWidget(tw1, tw2) -> tw4>:
+<TestWidget2(TestWidget1(tw1), TestWidget(tw2)) -> tw4>:
 
 <TestWidget05>:
-    TestWidget(tw1) -> tw1:
+    TestWidget1(tw1) -> tw1:
     TestWidget(tw2) -> tw3:
     TestWidget(tw3) -> tw2:
-    TestWidget:
+    #TestWidget:

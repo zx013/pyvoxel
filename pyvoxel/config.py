@@ -112,18 +112,26 @@ class ConfigMethod(object):
         else:
             return '{}{}{}'.format(class_name, self.CLASS_SPLIT, class_alias)
 
+    @classmethod
+    def class_type(self, name, sconfig, config):
+        if name in config['newclass']: #先查找新建的类
+            return 'newclass'
+        if name in config['otherclass']:
+            return 'otherclass'
+        if name in sconfig['plugins']:
+            return 'plugins'
+        if name in sconfig['globals']:
+            return 'globals'
+        return ''
+
     #获取类，类是否是配置中新建的类，类的定义
     @classmethod
-    def get_class(self, name, sconfig, config):
+    def get_class(self, name, config):
         if name in config['newclass']: #先查找新建的类
-            return True, config['newclass'][name]
-        if name in config['otherclass']:
-            return True, config['otherclass'][name]
-        if name in sconfig['plugins']:
-            return False, sconfig['plugins'][name]
-        if name in sconfig['globals']:
-            return False, sconfig['globals'][name]
-        return False, None
+            return config['newclass'][name]
+        #if name in config['otherclass']:
+        #    return config['otherclass'][name]
+        return None
 
 
 #类中attr属性改变时触发on_attr事件，同时同步改变关联的值
@@ -507,8 +515,7 @@ class Config(object):
 
                     if alias_name == ConfigMethod.BASE_ALIAS: #没有继承
                         if class_alias == ConfigMethod.BASE_ALIAS: #<T>, 类没有定义
-                            _, class_type = ConfigMethod.get_class(class_name, sconfig, config)
-                            if class_type is None:
+                            if not ConfigMethod.class_type(class_name, sconfig, config):
                                 return False, (line_number, line_real, 'Class not exist')
                             operate_type = 'baseclass'
                             data = None
@@ -516,6 +523,9 @@ class Config(object):
                             operate_type = 'aliasclass'
                             data = class_alias
                     else: #使用继承关系生成类
+                        #已有的类不能重新生成（防止一些定义冲突）
+                        if ConfigMethod.class_type(class_name, sconfig, config) in ('plugins', 'globals'):
+                            return False, (line_number, line_real, 'Class is redefine in plugins or globals')
                         cls_list = []
                         for cls_name in ConfigMethod.strip_split(alias_name, ','):
                             if ConfigMethod.is_alias(cls_name): #引用自身的别名，<T(t)> => <T(T(t))>
@@ -575,30 +585,28 @@ class Config(object):
             class_real_name = ConfigMethod.real_name(class_name, class_alias)
 
             if operate_type == 'baseclass': #<T>
-                base_dict = {class_name: ConfigMethod.get_class(class_name, sconfig, config)}
+                base_type = {class_real_name: ConfigMethod.class_type(class_name, sconfig, config)}
             elif operate_type == 'aliasclass': #<T -> t>
-                base_dict = {class_name: ConfigMethod.get_class(class_name, sconfig, config)}
+                base_type = {class_real_name: ConfigMethod.class_type(class_name, sconfig, config)}
             elif operate_type == 'newclass': #<T(S)>, <T(S) -> t>
                 cls_list = [ConfigMethod.real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
-                base_dict = {cls_name: ConfigMethod.get_class(cls_name, sconfig, config) for cls_name in cls_list}
+                base_type = {cls_name: ConfigMethod.class_type(cls_name, sconfig, config) for cls_name in cls_list}
             elif operate_type == 'findclass': #T(t) -> r
                 base_name = ConfigMethod.real_name(class_name, data)
-                base_dict = {base_name: ConfigMethod.get_class(base_name, sconfig, config)}
+                base_type = {base_name: ConfigMethod.class_type(base_name, sconfig, config)}
             else:
                 return False, (line_number, line_real, 'Operate type error')
 
             base = []
-            for name, (iscls, cls) in base_dict.items():
-                if cls is None: #父类不存在
+            for cls_name, cls_type in base_type.items():
+                if not cls_type: #父类不存在
                     return False, (line_number, line_real, 'Base class not exist')
-                if not iscls: #新建配置类不直接使用外部类，防止不必要的初始化，继承类中的静态变量
-                    attr = {}
-                    for k, v in cls.__dict__.items():
-                        if k.startswith('_'):
-                            continue
-                        attr[k] = v
-                    cls = type(name, (ConfigNode,), attr) #cls.__name__可能会被修改
-                    config['otherclass'][name] = cls
+
+            for cls_name, cls_type in base_type.items(): #新建配置类不直接使用外部类，防止不必要的初始化，继承类中的静态变量
+                cls = ConfigMethod.get_class(cls_name, config)
+                if cls is None:
+                    cls = type(cls_name, (ConfigNode,), {}) #cls.__name__可能会被修改
+                    config['newclass'][cls_name] = cls
                 base.append(cls)
 
             try: #创建节点
@@ -614,12 +622,19 @@ class Config(object):
                         static_attr[k] = val
 
                 static_attr['_ids'] = cite_class.get(nest_key, {})
-                node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
-
-                node = node_type()
+                
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
+                    node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
+
+                    node = node_type()
+                    if class_real_name in config['newclass']:
+                        print(line_number, config['newclass'][class_real_name], node_type, base)
                     config['newclass'][class_real_name] = node_type
                     config['newnode'][class_real_name] = node
+                else:
+                    node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
+
+                    node = node_type()
 
                 node._dynamic_expr = dynamic_expr #尽量不要重复，暂存动态属性
             except:
@@ -635,6 +650,7 @@ class Config(object):
 
                 parent.add_node(node)
             except:
+                Log.exception()
                 return False, (line_number, line_real, 'Add class failed')
 
             try: #查找根节点
@@ -713,14 +729,14 @@ class Config(object):
     def load(self, data):
         sconfig = {
             'globals': globals(),
-            'plugins': Manager._instance, #已有的插件类
+            'plugins': Manager.plugins, #已有的插件类
         }
 
         try:
             if '\n' not in data or '\r' not in data: #字符串
-                with open(data, 'r') as fp:
+                with open(data, 'r', encoding='utf-8') as fp:
                     data = fp.read()
-            data = data.replace('\r', '\n').replace('\n\n', '\n')
+            data = data.replace('\r\n', '\n').replace('\n\r', '\n').replace('\r', '\n') #分割后再替换
             lines = data.split('\n')
             is_success, info  = self._load(lines, sconfig)
             if not is_success:
@@ -732,7 +748,7 @@ class Config(object):
             Log.exception()
             return None
 
-        self.create_class(root, sconfig, config)
+        #self.create_class(root, sconfig, config)
         return root
 
 
@@ -752,9 +768,9 @@ if __name__ == '__main__':
     config = Config()
     tree = config.load('config/testconfig.vx')
     #root.show()
-    print(tree.children[2].name)
-    tree.children[1].children[0].name = 'xc'
+    #print(tree.children[2].name)
+    #tree.children[1].children[0].name = 'xc'
     #root.show()
-    print(tree.children[2].name)
+    #print(tree.children[2].name)
 
     tw1 = TestWidget05()
