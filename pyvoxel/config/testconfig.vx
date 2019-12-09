@@ -16,9 +16,10 @@
 
 #使用类的别名
 <TestWidget -> tw2>:
-    name: {'g\'h"\""i{}{}'.format(self.c0.name, '''xc'''): tw3.name, c0.c0.name: [c0.p.c0.name + info1 + info1]}
-    info: 'abc'
+    name: {'g\'h"\""i{}{}'.format(self.c0.name, '''xc'''): tw3.name, c0.c0.name: [c0.p.c0.name + info + info1]}
+    info: info1 + 'abc'
     info1: 'def'
+    info2: self
     TestWidget1(tw1) -> tw3:
         name: 'name02'
         TestWidget1(tw1):
