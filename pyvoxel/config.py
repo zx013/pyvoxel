@@ -311,14 +311,12 @@ class ConfigNode(object):
 
         ptn = '(?:{}).((?:parent|children\[[0-9]+\]).)*[a-z_]+[a-z0-9_]*'.format('|'.join(local.keys()))
         pattern = {}
-        pset = []
+
         #查找所有变量
         offset = 0
         for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
             iname = '_x{i}'.format(i=i)
             pname = p.group()
-            if pname in pset: #防止重复定义
-                continue
 
             plist = pname.split('.')
             try: #定位变量所在的类
@@ -339,7 +337,6 @@ class ConfigNode(object):
                 return False, 'Analyse attr error'
             base_name = plist[-1]
 
-            pset.append(pname)
             base_key = (base_cls, base_name)
             if base_key in pattern: #相同的变量使用相同的名称
                 iname, _, _ = pattern[base_key]
@@ -364,6 +361,7 @@ class ConfigNode(object):
                 base_cls, base_name = key
                 iname, pname, rname = val
                 local[iname] = getattr(base_cls, base_name)
+
             value = eval(expr, None, local)
             setattr(self, name, value)
         except Exception as ex:
@@ -578,7 +576,10 @@ class Config(object):
         cursor_space = -1
         for line in process_data:
             operate_type, line_number, line_real, space, nest_key, class_name, class_alias, data = line
-            class_real_name = ConfigMethod.real_name(class_name, class_alias)
+            if operate_type in ('baseclass', 'aliasclass', 'newclass'):
+                class_real_name = ConfigMethod.real_name(class_name, class_alias)
+            elif operate_type == 'findclass':
+                class_real_name = ConfigMethod.real_name(class_name, data)
 
             if operate_type == 'baseclass': #<T>
                 base_type = {class_real_name: ConfigMethod.class_type(class_name, sconfig, config)}
@@ -588,8 +589,7 @@ class Config(object):
                 cls_list = [ConfigMethod.real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
                 base_type = {cls_name: ConfigMethod.class_type(cls_name, sconfig, config) for cls_name in cls_list}
             elif operate_type == 'findclass': #T(t) -> r
-                base_name = ConfigMethod.real_name(class_name, data)
-                base_type = {base_name: ConfigMethod.class_type(base_name, sconfig, config)}
+                base_type = {class_real_name: ConfigMethod.class_type(class_real_name, sconfig, config)}
             else:
                 return False, (line_number, line_real, 'Operate type error')
 
@@ -616,7 +616,7 @@ class Config(object):
                     #值是否是python中的常量
                     try:
                         expr = literal_eval(expr)
-                        static_attr[k] = val
+                        static_attr[k] = expr
                     except:
                         dynamic_expr[k] = (linen, liner, expr) #出错提示
 
@@ -624,15 +624,12 @@ class Config(object):
 
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
                     node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
-
                     node = node_type()
-                    if class_real_name in config['newclass']:
-                        print(line_number, config['newclass'][class_real_name], node_type, base)
                     config['newclass'][class_real_name] = node_type
                     config['newnode'][class_real_name] = node
                 else:
+                    #node_type = config['newclass'][class_real_name]
                     node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
-
                     node = node_type()
 
                 node._class_attr = class_attr #尽量不要重复，暂存动态属性
