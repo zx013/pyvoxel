@@ -135,6 +135,104 @@ class ConfigMethod(object):
         #    return config['otherclass'][name]
         return None
 
+    @staticmethod
+    def analyse(expr, localkeys=()):
+        try:
+            return literal_eval(expr), {}, {}
+        except:
+            pass
+
+        #表达式中的字符串不参与匹配，解析表达式中的字符串
+        cursor = None #字符串起始标识
+        sinfo = [] #字符串起始位置
+        backslash = False #反斜杠
+        size = len(expr) #字符串长度
+        n = 0
+        while n < size:
+            if cursor is None:
+                if expr[n: n + 3] in ("'''", '"""'):
+                    cursor = expr[n: n + 3]
+                    begin = n
+                    n += 3
+                    continue
+                if expr[n] in ("'", '"'): #进入字符串
+                    cursor = expr[n]
+                    begin = n
+            elif backslash: #转义字符
+                backslash = False
+            elif expr[n] == '\\': #反斜杠
+                backslash = True
+            elif cursor in ("'''", '"""') and expr[n: n + 3] == cursor:
+                cursor = None
+                n += 3
+                sinfo.append((begin, n))
+                continue
+            elif cursor in ("'", '"') and expr[n] == cursor:
+                cursor = None
+                n += 1
+                sinfo.append((begin, n))
+                continue
+            n += 1
+
+        #替换字符串
+        smap = {}
+        offset = 0
+        for i, (begin, end) in enumerate(sinfo):
+            sname = '__s{i}'.format(i=i)
+            sval = expr[begin + offset:end + offset]
+            expr = expr.replace(sval, sname, 1)
+            try:
+                smap[sname] = literal_eval(sval) #获取真实的字符串，这里出错说明前面的解析有问题
+            except:
+                Log.error('Analyse string error : ' + str(sval))
+            offset -= len(sval) - len(sname)
+
+        #默认都有self, root两个变量
+        localkeys = tuple(set(localkeys) | set(('self', 'root')))
+
+        #self可省略
+        ptn = '(?:^|[^a-z0-9_.])(?=(?!({}))[a-z_]+[a-z0-9_]*)'.format('|'.join(localkeys | smap.keys()))
+        bypass = 'self.'
+        offset = 0
+        for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
+            index = p.span()[1] + offset
+            expr = expr[:index] + bypass + expr[index:]
+            offset += len(bypass)
+
+        #parent缩写为p，children[x]缩写为cx
+        while True:
+            size = len(expr)
+            expr = re.sub('[.]parent[.]', '.p.', expr, flags=re.I)
+            expr = re.sub('[.]children\\[([0-9]+)\\][.]', lambda m: '.c{}.'.format(m.group(1)), expr, flags=re.I)
+            if len(expr) == size:
+                break
+
+        #cx.p.可以省略，p.cx.不可省略
+        expr = re.sub('[.]c[0-9]+[.]p[.]', '.', expr, flags=re.I)
+
+        ptn = '(?:{}).((?:p|c[0-9]+).)*[a-z_]+[a-z0-9_]*'.format('|'.join(localkeys))
+        pattern = {}
+
+        #查找所有变量
+        offset = 0
+        for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
+            iname = '__x{i}'.format(i=i)
+            pname = p.group()
+
+            if pname in pattern: #相同的变量使用相同的名称
+                iname = pattern[pname]
+            else:
+                pattern[pname] = iname
+
+            #不能直接用replace，会有名称部分包含的情况
+            sindex = p.span()[0] + offset
+            eindex = p.span()[1] + offset
+            expr = expr[:sindex] + iname + expr[eindex:]
+            offset -= len(pname) - len(iname)
+
+        xmap = {v: k for k, v in pattern.items()}
+        return expr, xmap, smap
+
 
 #类中attr属性改变时触发on_attr事件，同时同步改变关联的值
 class Node(object):
@@ -142,25 +240,25 @@ class Node(object):
         cls._init(cls)
         return super().__new__(cls)
 
-    def _init(cls):
-        cls._trigger = {}
-        cls._reflex = {}
-        cls.parent = None
-        cls.children = []
-        if not hasattr(cls, '_config'):
+    def _init(self):
+        self._trigger = {}
+        self._reflex = {}
+        self.parent = None
+        self.children = []
+        if not hasattr(self, '_config'):
             return
 
-        name, root, sconfig, config = getattr(cls, '_config')
+        name, root, sconfig, config = getattr(self, '_config')
         node = config['newnode'][name]
         print(node, name, node.__class__.__name__)
 
         for child in node.children:
             child_name = child.__class__.__name__
-            method_class = ConfigMethod.get_class(child_name, sconfig, config)
-            child_name = child_name.split('-')[0]
-            is_local, child_node = ConfigMethod.get_class(child_name, sconfig, {'newclass': {}, 'otherclass': {}})
-            print(child_name, child_node)
-            cls.children.append(child_node())
+            #method_class = ConfigMethod.get_class(child_name, sconfig, config)
+            #child_name = child_name.split('-')[0]
+            #is_local, child_node = ConfigMethod.get_class(child_name, sconfig, {'newclass': {}, 'otherclass': {}})
+            #print(child_name, child_node)
+            #cls.children.append(child_node())
 
 
     def __setattr__(self, name, value):
@@ -240,94 +338,6 @@ class ConfigNode(object):
         if node.parent:
             Log.warning('{node} already has parent'.format(node=node))
         node.parent = self
-    
-    def analyse(self, expr, local={}):
-        try:
-            return literal_eval(expr), {}, {}
-        except:
-            pass
-
-        #表达式中的字符串不参与匹配，解析表达式中的字符串
-        cursor = None #字符串起始标识
-        sinfo = [] #字符串起始位置
-        backslash = False #反斜杠
-        size = len(expr) #字符串长度
-        n = 0
-        while n < size:
-            if cursor is None:
-                if expr[n: n + 3] in ("'''", '"""'):
-                    cursor = expr[n: n + 3]
-                    begin = n
-                    n += 3
-                    continue
-                if expr[n] in ("'", '"'): #进入字符串
-                    cursor = expr[n]
-                    begin = n
-            elif backslash: #转义字符
-                backslash = False
-            elif expr[n] == '\\': #反斜杠
-                backslash = True
-            elif cursor in ("'''", '"""') and expr[n: n + 3] == cursor:
-                cursor = None
-                n += 3
-                sinfo.append((begin, n))
-                continue
-            elif cursor in ("'", '"') and expr[n] == cursor:
-                cursor = None
-                n += 1
-                sinfo.append((begin, n))
-                continue
-            n += 1
-
-        #替换字符串
-        smap = {}
-        offset = 0
-        for i, (begin, end) in enumerate(sinfo):
-            sname = '__s{i}'.format(i=i)
-            sval = expr[begin + offset:end + offset]
-            expr = expr.replace(sval, sname, 1)
-            smap[sname] = sval
-            offset -= len(sval) - len(sname)
-
-        #self可省略
-        ptn = '(?:^|[^a-z0-9_.])(?=(?!({}))[a-z_]+[a-z0-9_]*)'.format('|'.join(local.keys() | smap.keys()))
-        bypass = 'self.'
-        offset = 0
-        for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
-            index = p.span()[1] + offset
-            expr = expr[:index] + bypass + expr[index:]
-            offset += len(bypass)
-
-        #parent缩写为p，children[x]缩写为cx
-        while True:
-            size = len(expr)
-            expr = re.sub('[.]parent[.]', '.p.', expr, flags=re.I)
-            expr = re.sub('[.]children\[([0-9]+)\][.]', lambda m: '.c{}.'.format(m.group(1)), expr, flags=re.I)
-            if len(expr) == size:
-                break
-
-        ptn = '(?:{}).((?:p|c[0-9]+).)*[a-z_]+[a-z0-9_]*'.format('|'.join(local.keys()))
-        pattern = {}
-
-        #查找所有变量
-        offset = 0
-        for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
-            iname = '__x{i}'.format(i=i)
-            pname = p.group()
-
-            if pname in pattern: #相同的变量使用相同的名称
-                iname = pattern[pname]
-            else:
-                pattern[pname] = iname
-
-            #不能直接用replace，会有名称部分包含的情况
-            sindex = p.span()[0] + offset
-            eindex = p.span()[1] + offset
-            expr = expr[:sindex] + iname + expr[eindex:]
-            offset -= len(pname) - len(iname)
-
-        xmap = {v: k for k, v in pattern.items()}
-        return expr, xmap, smap
 
 
     #使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
@@ -341,7 +351,7 @@ class ConfigNode(object):
 
         local['self'] = self
 
-        expr, xmap, smap = self.analyse(expr, local)
+        expr, xmap, smap = ConfigMethod.analyse(expr, local.keys())
         print('---', expr, xmap, smap)
 
         #将标识替换回字符串
@@ -367,7 +377,7 @@ class ConfigNode(object):
                         rname = '.p' + rname
                         base_cls = base_cls.children[int(node[1:])]
                 rname = 'self' + rname
-                
+
                 base_name = plist[-1]
                 class_attr = getattr(base_cls, ConfigMethod.CLASS_ATTR)
                 if base_name not in class_attr:
@@ -375,7 +385,7 @@ class ConfigNode(object):
                 attr = class_attr.get(base_name)
                 print(attr)
                 local_info[iname] = getattr(base_cls, base_name)
-            
+
             print('aaa', expr, local_info)
 
             value = eval(expr, None, local_info)
@@ -589,13 +599,15 @@ class Config(object):
                 cursor_line = line_number
                 attr_space = space + 1
 
-        nest_line = {} #根节点和行数的对应关系
+        nest_line = {} #节点和行数的对应关系
+        nest_root = {}
         cursor_node = root #当前节点
         cursor_space = -1
         for line in process_data:
             operate_type, line_number, line_real, space, nest_key, class_name, class_alias, data = line
             if operate_type in ('baseclass', 'aliasclass', 'newclass'):
                 class_real_name = ConfigMethod.real_name(class_name, class_alias)
+                nest_root[class_real_name] = line_number
             elif operate_type == 'findclass':
                 class_real_name = ConfigMethod.real_name(class_name, data)
 
@@ -626,21 +638,25 @@ class Config(object):
             try: #创建节点
                 #类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
                 attr = cite_cursor.get(line_number, {}) #类中的属性，静态类型可继承
-                
+
                 class_attr = {}
                 static_attr = {} #静态属性，为python常量
                 dynamic_expr = {} #类中动态属性，继承会导致关系混乱，因此不继承
+
+                ids = cite_class.get(nest_key, {})
                 for k, v in attr.items():
                     linen, liner, expr = v
+                    class_attr[k] = ConfigMethod.analyse(expr, ids.keys())
+                    print(expr, class_attr[k], ids.keys())
+
                     #值是否是python中的常量
                     try:
                         expr = literal_eval(expr)
                         static_attr[k] = expr
                     except:
                         dynamic_expr[k] = (linen, liner, expr) #出错提示
-                    class_attr[k] = expr
 
-                static_attr['_ids'] = cite_class.get(nest_key, {})
+                static_attr['_ids'] = ids
 
                 #class_attr中除了_ids都需要继承，类自身的变量在实例化时判断，暂不考虑
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'): #需要新建的类（根类）
@@ -650,7 +666,8 @@ class Config(object):
                     config['newnode'][class_real_name] = node
                 else:
                     #node_type = config['newclass'][class_real_name]
-                    node_type = type(class_real_name, tuple(base), static_attr) #只继承静态属性
+                    #base
+                    node_type = type(class_real_name, (ConfigNode,), static_attr) #只继承静态属性
                     node = node_type()
 
                 setattr(node, ConfigMethod.CLASS_ATTR, class_attr) #尽量不要重复，暂存动态属性
@@ -662,7 +679,7 @@ class Config(object):
                 parent = cursor_node
                 if space != cursor_space + 1:
                     parent = cursor_node
-                    for i in range(cursor_space - space + 1):
+                    for _ in range(cursor_space - space + 1):
                         parent = parent.parent
 
                 parent.add_node(node)
@@ -674,7 +691,7 @@ class Config(object):
                 rootnode = node
                 while rootnode.parent.parent:
                     rootnode = rootnode.parent
-                node._ids['root'] = rootnode
+                node._ids['root'] = nest_root[rootnode.__class__.__name__]
             except:
                 Log.exception()
                 return False, (line_number, line_real, 'Get root class failed')
@@ -696,8 +713,10 @@ class Config(object):
             local = dict(node._ids)
             class_attr = getattr(node, ConfigMethod.CLASS_ATTR)
             for key, expr in class_attr.items():
-                expr, xmap, smap = node.analyse(expr, local)
-                class_attr[key] = expr, xmap, smap
+                pass
+                #print(expr)
+                #expr, xmap, smap = node.analyse(expr, tuple(local.keys()))
+                #class_attr[key] = expr, xmap, smap
                 #is_success, message = node.bind(key, expr, local)
                 #if not is_success:
                 #    return False, (line_number, line_real, message)
@@ -706,7 +725,7 @@ class Config(object):
         return True, (root, config)
 
     def create_class(self, root, sconfig, config):
-        for node, deep in root.walk(isroot=False):
+        for node, _ in root.walk(isroot=False):
             print(node._trigger, node._reflex)
 
         def check_parent_class(base, deep=0):
