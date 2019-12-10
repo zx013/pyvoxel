@@ -17,7 +17,8 @@ class ConfigMethod:
     BASE_ALIAS = '__ALIAS__'  # 默认别名，使用大写保证和其他别名不相同
     CLASS_SPLIT = '-'  # 类和别名之间的分割符必须是非法的别名字符
 
-    CLASS_ATTR = '_class_attr'  # 临时存放变量的名称
+    CLASS_ATTR = '_class_attr'  # 存放属性的名称
+    CHECK_ATTR = '_check_attr'  # 标记属性的状态
 
     @staticmethod
     def strip_split(info, sep, maxsplit=-1):
@@ -140,7 +141,8 @@ class ConfigMethod:
     def analyse(expr, localkeys=()):
         """解析expr表达式，localkeys为引用的别名列表."""
         try:
-            return literal_eval(expr), {}, {}
+            literal_eval(expr)
+            return expr, {}, {}
         except Exception:
             pass
 
@@ -357,25 +359,23 @@ class ConfigNode:
 
     #  使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
     #  使用bind绑定时，所有的变量必须可访问
-    def bind(self, name, expr, local={}):
+    def bind(self, name, attr, local={}):
         """将变量绑定到相关的值."""
-        if hasattr(self, name):  # 静态变量已通过继承生成
-            return True, 'Static'
+        expr, xmap, smap = attr
 
         if '__import__' in expr:  # literal_eval不能设置locals，因此需要对expr进行判断
             return False, 'Expr can not use __import__.'
 
-        local['self'] = self
-
-        expr, xmap, smap = ConfigMethod.analyse(expr, local.keys())
-        print('---', expr, xmap, smap)
+        if xmap == smap == {}:
+            return True, ''
 
         #  将标识替换回字符串
-        for sname, sval in smap.items():  # 似乎可以不用按照从小到大的顺序，更大的索引不会匹配到更小的索引
-            expr = expr.replace(sname, sval, 1)
+        # for sname, sval in smap.items():  # 似乎可以不用按照从小到大的顺序，更大的索引不会匹配到更小的索引
+        #     expr = expr.replace(sname, sval, 1)
 
+        print(expr, self.name, local)
         try:
-            local_info = {}  # 使语句中的self生效
+            local_info = dict(smap)  # 使语句中的self生效
             for iname, pname in xmap.items():
                 # 定位变量所在的类
                 rname = ''  # 逆向索引字符串
@@ -391,9 +391,12 @@ class ConfigNode:
                         base_cls = base_cls.parent
                     elif node.startswith('c'):
                         rname = '.p' + rname
+
+                        print(iname, self, local['self'])
                         base_cls = base_cls.children[int(node[1:])]
                 rname = 'self' + rname
 
+                print('bbb', iname, pname)
                 base_name = plist[-1]
                 class_attr = getattr(base_cls, ConfigMethod.CLASS_ATTR)
                 if base_name not in class_attr:
@@ -407,7 +410,7 @@ class ConfigNode:
             value = eval(expr, None, local_info)
             setattr(self, name, value)
         except Exception as ex:
-            print(expr, ex)
+            print('---', expr, ex)
             return False, 'Run expr error'
 
         '''
@@ -669,7 +672,11 @@ class Config:
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'):  # 需要新建的类（根类）
                     config['node'][class_real_name] = node
 
+                check_attr = {}
+                for k in class_attr.keys():
+                    check_attr[k] = 'uncheck'
                 setattr(node, ConfigMethod.CLASS_ATTR, class_attr)  # 尽量不要重复，暂存动态属性
+                setattr(node, ConfigMethod.CHECK_ATTR, check_attr)
             except Exception:
                 Log.exception()
                 return False, (line_number, line_real, 'Create class failed')
@@ -709,14 +716,17 @@ class Config:
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
-            # local = dict(node._ids)
+            local = dict(node.ids)
             class_attr = getattr(node, ConfigMethod.CLASS_ATTR)
-            for key, expr in class_attr.items():
-                print(node.name, key, expr)
-                # is_success, message = node.bind(key, expr, local)
-                # if not is_success:
-                #     return False, (line_number, line_real, message)
-            # delattr(node, '_class_attr')
+            check_attr = getattr(node, ConfigMethod.CHECK_ATTR)
+            for name, attr in class_attr.items():
+                state = check_attr.get(name, 'uncheck')
+
+                if state == 'uncheck':
+                    # print(node.name, name, attr)
+                    is_success, message = node.bind(name, attr, local)
+                    if not is_success:
+                        return False, (line_number, line_real, message)
 
         return True, (root, config)
 
