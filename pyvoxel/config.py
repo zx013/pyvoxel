@@ -121,8 +121,8 @@ class ConfigMethod:
     @classmethod
     def class_type(self, name, sconfig, config):
         """从配置中获取类的来源类型."""
-        if name in config['newclass']:  # 先查找新建的类
-            return 'newclass'
+        if name in config['node']:  # 先查找新建的类
+            return 'node'
         if name in sconfig['plugins']:
             return 'plugins'
         if name in sconfig['globals']:
@@ -132,8 +132,8 @@ class ConfigMethod:
     @classmethod
     def get_class(self, name, config):
         """获取类的定义."""
-        if name in config['newclass']:  # 先查找新建的类
-            return config['newclass'][name]
+        if name in config['node']:  # 先查找新建的类
+            return config['node'][name]
         return None
 
     @staticmethod
@@ -242,9 +242,10 @@ class Node:
 
     def __new__(cls):  # 不用在子类中调用super初始化
         """初始化触发器等数据."""
-        cls._init(cls)
+        cls._init()
         return super().__new__(cls)
 
+    @classmethod
     def _init(cls):
         cls._trigger = {}
         cls._reflex = {}
@@ -311,10 +312,12 @@ class Node:
 class ConfigNode:
     """从配置中解析出的配置节点."""
 
-    def __init__(self):
+    def __init__(self, name):
         """初始化."""
-        self._trigger = {}
-        self._reflex = {}
+        self.name = name
+        self.ids = {}
+        self.trigger = {}
+        self.reflex = {}
         self.parent = None
         self.children = []
 
@@ -436,12 +439,10 @@ class Config:
 
     def _load(self, lines, sconfig):
         config = {
-            'newclass': {},  # 配置文件中新建的类
-            'otherclass': {},  # 没有被新建的插件类或外部类
-            'newnode': {}
+            'node': {}  # 配置文件中新建的类
         }
 
-        root = ConfigNode()  # 根节点
+        root = ConfigNode('root')  # 根节点
 
         process_data = []  # 预处理后的数据
         nest_class = {}  # 类中包含所有的其他类
@@ -613,8 +614,8 @@ class Config:
                 cursor_line = line_number
                 attr_space = space + 1
 
-        nest_line = {}  # 节点和行数的对应关系
-        nest_root = {}
+        nest_line = {}  # 节点和行数的对应关系，{12: node1, 13: node2}
+        nest_root = {}  # 根节点对应的行数，{T-t: 12, S-s: 13}
         cursor_node = root  # 当前节点
         cursor_space = -1
         for line in process_data:
@@ -642,47 +643,31 @@ class Config:
                 if not cls_type:  # 父类不存在
                     return False, (line_number, line_real, 'Base class not exist')
 
+            class_attr = {}  # 需要继承的属性
             for cls_name, cls_type in base_type.items():  # 新建配置类不直接使用外部类，防止不必要的初始化，继承类中的静态变量
                 cls = ConfigMethod.get_class(cls_name, config)
-                if cls is None:
-                    cls = type(cls_name, (ConfigNode,), {})  # cls.__name__可能会被修改
-                    config['newclass'][cls_name] = cls
+                if not cls:  # 不考虑插件类和外部类
+                    continue
                 base.append(cls)
 
+                if hasattr(cls, ConfigMethod.CLASS_ATTR):
+                    class_attr.update(getattr(cls, ConfigMethod.CLASS_ATTR))
+
             try:  # 创建节点
-                # 类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
-                attr = cite_cursor.get(line_number, {})  # 类中的属性，静态类型可继承
-
-                class_attr = {}
-                static_attr = {}  # 静态属性，为python常量
-                dynamic_expr = {}  # 类中动态属性，继承会导致关系混乱，因此不继承
-
                 ids = cite_class.get(nest_key, {})
+                # 类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
+                attr = cite_cursor.get(line_number, {})  # 类中的属性
                 for k, v in attr.items():
                     linen, liner, expr = v
-                    class_attr[k] = ConfigMethod.analyse(expr, ids.keys())
-                    print(expr, class_attr[k], ids.keys())
+                    class_attr[k] = ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
 
-                    # 值是否是python中的常量
-                    try:
-                        expr = literal_eval(expr)
-                        static_attr[k] = expr
-                    except Exception:
-                        dynamic_expr[k] = (linen, liner, expr)  # 出错提示
-
-                static_attr['_ids'] = ids
+                node = ConfigNode(class_real_name)
+                ids['self'] = line_number
+                node.ids = ids
 
                 # class_attr中除了_ids都需要继承，类自身的变量在实例化时判断，暂不考虑
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'):  # 需要新建的类（根类）
-                    node_type = type(class_real_name, tuple(base), static_attr)  # 只继承静态属性
-                    node = node_type()
-                    config['newclass'][class_real_name] = node_type
-                    config['newnode'][class_real_name] = node
-                else:
-                    # node_type = config['newclass'][class_real_name]
-                    # base
-                    node_type = type(class_real_name, (ConfigNode,), static_attr)  # 只继承静态属性
-                    node = node_type()
+                    config['node'][class_real_name] = node
 
                 setattr(node, ConfigMethod.CLASS_ATTR, class_attr)  # 尽量不要重复，暂存动态属性
             except Exception:
@@ -705,7 +690,7 @@ class Config:
                 rootnode = node
                 while rootnode.parent.parent:
                     rootnode = rootnode.parent
-                node._ids['root'] = nest_root[rootnode.__class__.__name__]
+                node.ids['root'] = nest_root[rootnode.name]
             except Exception:
                 Log.exception()
                 return False, (line_number, line_real, 'Get root class failed')
@@ -716,21 +701,18 @@ class Config:
 
         # 将索引从行号替换成对应节点
         for node, deep in root.walk(isroot=False):
-            for key, ids_line in node._ids.items():
+            for key, ids_line in node.ids.items():
                 if not isinstance(ids_line, int):  # 节点已经替换
                     continue
                 node = nest_line[ids_line]
-                node._ids[key] = node
+                node.ids[key] = node
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
             # local = dict(node._ids)
             class_attr = getattr(node, ConfigMethod.CLASS_ATTR)
             for key, expr in class_attr.items():
-                pass
-                # print(expr)
-                # expr, xmap, smap = node.analyse(expr, tuple(local.keys()))
-                # class_attr[key] = expr, xmap, smap
+                print(node.name, key, expr)
                 # is_success, message = node.bind(key, expr, local)
                 # if not is_success:
                 #     return False, (line_number, line_real, message)
@@ -807,10 +789,10 @@ class Config:
 
 
 if __name__ == '__main__':
-    class TestWidget(object):
+    class TestWidget:
         pass
 
-    class TestWidget05(object):
+    class TestWidget05:
         def __init__(self):
             print('init')
 
