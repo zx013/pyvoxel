@@ -17,9 +17,6 @@ class ConfigMethod:
     BASE_ALIAS = '__ALIAS__'  # 默认别名，使用大写保证和其他别名不相同
     CLASS_SPLIT = '-'  # 类和别名之间的分割符必须是非法的别名字符
 
-    CLASS_ATTR = '_class_attr'  # 存放属性的名称
-    CHECK_ATTR = '_check_attr'  # 标记属性的状态
-
     @staticmethod
     def strip_split(info, sep, maxsplit=-1):
         """分割后去空格."""
@@ -194,8 +191,8 @@ class ConfigMethod:
         #  默认都有self, root两个变量
         localkeys = tuple(set(localkeys) | set(('self', 'root')))
 
-        #  self可省略
-        ptn = '(?:^|[^a-z0-9_.])(?=(?!({}))[a-z_]+[a-z0-9_]*)'.format('|'.join(localkeys | smap.keys()))
+        #  self可省略，匹配selfa, selfb, a.self
+        ptn = '(?:^|[^a-z0-9_.])(?=(?!((?:{localkeys})\\b))[a-z_]+[a-z0-9_]*)'.format(localkeys='|'.join(localkeys | smap.keys()))
         bypass = 'self.'
         offset = 0
         for i, p in enumerate(re.finditer(ptn, expr, flags=re.I)):
@@ -214,7 +211,8 @@ class ConfigMethod:
         #  cx.p.可以省略，p.cx.不可省略
         expr = re.sub('[.]c[0-9]+[.]p[.]', '.', expr, flags=re.I)
 
-        ptn = '(?:{}).((?:p|c[0-9]+).)*[a-z_]+[a-z0-9_]*'.format('|'.join(localkeys))
+        # 匹配self.p.c0.name, self, 不匹配a.self, selfa
+        ptn = '(?:{localkeys}).((?:p|c[0-9]+).)*[a-z_]+[a-z0-9_]*|(?:^|(?<=[^.]))\\b(?:{localkeys})\\b'.format(localkeys='|'.join(localkeys))
         pattern = {}
 
         #  查找所有变量
@@ -316,12 +314,32 @@ class ConfigNode:
 
     def __init__(self, name):
         """初始化."""
-        self.name = name
-        self.ids = {}
+        self.name = name  # 类的名称
+        self.ids = {}  # 类的索引
+        # 存放属性的名称
+        # {'name1': ("'testname1'", {}, {}), 'name2': ('__x0 + __s0', {'__x0': 'self.name1'}, {'__s0': 'testname2'})}
+        self.class_attr = {}
+        # 标记属性的状态，静态变量(static)，动态变量(dynamic)，未检查变量(uncheck)
+        # {'name1': 'static', 'name2': 'dynamic', 'name3': 'uncheck'}
+        self.check_attr = {}
+        self.class_base = []  # 继承的父类对应的节点
+
         self.trigger = {}
         self.reflex = {}
-        self.parent = None
-        self.children = []
+        self._parent = None
+        self._children = []
+
+    @property
+    def parent(self):
+        """父节点."""
+        return self._parent
+
+    @property
+    def children(self):
+        """子节点."""
+        # if self.class_base:
+        #     print('base', self.base._children, self._children)
+        return self._children
 
     def _walk(self, deep, isroot=True):
         if isroot:
@@ -352,66 +370,66 @@ class ConfigNode:
 
     def add_node(self, node):
         """添加节点."""
-        self.children.append(node)
-        if node.parent:
+        self._children.append(node)
+        if node._parent:
             Log.warning('{node} already has parent'.format(node=node))
-        node.parent = self
+        node._parent = self
 
     #  使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
     #  使用bind绑定时，所有的变量必须可访问
-    def bind(self, name, attr, local={}):
+    def execute(self, name):
         """将变量绑定到相关的值."""
+        attr = self.class_attr[name]
+        check = self.check_attr[name]
+        if check == 'static':
+            return attr
+        elif check == 'dynamic':
+            print("***", attr)
+            return attr[0]
         expr, xmap, smap = attr
 
         if '__import__' in expr:  # literal_eval不能设置locals，因此需要对expr进行判断
             return False, 'Expr can not use __import__.'
 
-        if xmap == smap == {}:
-            return True, ''
-
-        #  将标识替换回字符串
-        # for sname, sval in smap.items():  # 似乎可以不用按照从小到大的顺序，更大的索引不会匹配到更小的索引
-        #     expr = expr.replace(sname, sval, 1)
-
-        print(expr, self.name, local)
         try:
-            local_info = dict(smap)  # 使语句中的self生效
+            local_info = dict(smap)
+            check = 'static' if xmap == {} else 'dynamic'
             for iname, pname in xmap.items():
                 # 定位变量所在的类
                 rname = ''  # 逆向索引字符串
                 plist = pname.split('.')
-                base_cls = local[plist[0]]
+                base_cls = self.ids[plist[0]]
 
                 for node in plist[1:-1]:
                     if node.startswith('p'):
                         for n, c in enumerate(base_cls.parent.children):
                             if c == base_cls:
                                 break
-                        rname = '.c{}'.format(n) + rname
+                        rname = '.c{}{}'.format(n, rname)
                         base_cls = base_cls.parent
                     elif node.startswith('c'):
-                        rname = '.p' + rname
+                        rname = '.p{}'.format(rname)
 
-                        print(iname, self, local['self'])
                         base_cls = base_cls.children[int(node[1:])]
                 rname = 'self' + rname
 
-                print('bbb', iname, pname)
                 base_name = plist[-1]
-                class_attr = getattr(base_cls, ConfigMethod.CLASS_ATTR)
-                if base_name not in class_attr:
-                    return False, 'Attr can not find'
-                attr = class_attr.get(base_name)
-                print(attr)
-                local_info[iname] = getattr(base_cls, base_name)
+                local_info[iname] = base_cls.execute(base_name)
 
-            print('aaa', expr, local_info)
-
+            print(expr, local_info)
             value = eval(expr, None, local_info)
-            setattr(self, name, value)
+            if check == 'static':
+                self.class_attr[name] = value
+            elif check == 'dynamic':
+                self.class_attr[name] = value, (expr, xmap, smap)
+            self.check_attr[name] = check
+            print('---r---', check, value)
+            return value
+            # setattr(self, name, value)
         except Exception as ex:
-            print('---', expr, ex)
-            return False, 'Run expr error'
+            print('@@@', expr, ex)
+            Log.exception()
+            return 'uncheck', 'Run expr error'
 
         '''
         # 能够正常获取参数值时，写入配置变量
@@ -424,7 +442,6 @@ class ConfigNode:
             reflex['{}.{}'.format(pname, base_name) if pname else base_name] = iname
         self._reflex[name] = (expr, reflex, local)
         '''
-        return True, 'Success'
 
 
 class Config:
@@ -629,35 +646,30 @@ class Config:
             elif operate_type == 'findclass':
                 class_real_name = ConfigMethod.real_name(class_name, data)
 
-            if operate_type == 'baseclass':  # <T>
-                base_type = {class_real_name: ConfigMethod.class_type(class_name, sconfig, config)}
-            elif operate_type == 'aliasclass':  # <T -> t>
-                base_type = {class_real_name: ConfigMethod.class_type(class_name, sconfig, config)}
-            elif operate_type == 'newclass':  # <T(S)>, <T(S) -> t>
-                cls_list = [ConfigMethod.real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
-                base_type = {cls_name: ConfigMethod.class_type(cls_name, sconfig, config) for cls_name in cls_list}
-            elif operate_type == 'findclass':  # T(t) -> r
-                base_type = {class_real_name: ConfigMethod.class_type(class_real_name, sconfig, config)}
-            else:
+            class_attr = {}  # 需要继承的属性
+            class_base = []  # 需要继承的类
+            if operate_type in ('newclass', 'findclass'):
+                if operate_type == 'newclass':  # <T(S)>, <T(S) -> t>
+                    cls_list = [ConfigMethod.real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
+                    base_type = {cls_name: ConfigMethod.class_type(cls_name, sconfig, config) for cls_name in cls_list}
+                elif operate_type == 'findclass':  # T(t) -> r
+                    base_type = {class_real_name: ConfigMethod.class_type(class_real_name, sconfig, config)}
+
+                for cls_name, cls_type in base_type.items():
+                    if not cls_type:  # 父类不存在
+                        return False, (line_number, line_real, 'Base class not exist')
+
+                for cls_name, cls_type in base_type.items():  # 新建配置类不直接使用外部类，防止不必要的初始化
+                    cls = ConfigMethod.get_class(cls_name, config)
+                    if not cls:  # 不考虑插件类和外部类
+                        continue
+                    class_base.append(cls)
+                    class_attr.update(cls.class_attr)
+            elif operate_type not in ('baseclass', 'aliasclass'):  # <T>, <T -> t>
                 return False, (line_number, line_real, 'Operate type error')
 
-            base = []
-            for cls_name, cls_type in base_type.items():
-                if not cls_type:  # 父类不存在
-                    return False, (line_number, line_real, 'Base class not exist')
-
-            class_attr = {}  # 需要继承的属性
-            for cls_name, cls_type in base_type.items():  # 新建配置类不直接使用外部类，防止不必要的初始化，继承类中的静态变量
-                cls = ConfigMethod.get_class(cls_name, config)
-                if not cls:  # 不考虑插件类和外部类
-                    continue
-                base.append(cls)
-
-                if hasattr(cls, ConfigMethod.CLASS_ATTR):
-                    class_attr.update(getattr(cls, ConfigMethod.CLASS_ATTR))
-
             try:  # 创建节点
-                ids = cite_class.get(nest_key, {})
+                ids = dict(cite_class.get(nest_key, {}))
                 # 类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
                 attr = cite_cursor.get(line_number, {})  # 类中的属性
                 for k, v in attr.items():
@@ -668,15 +680,16 @@ class Config:
                 ids['self'] = line_number
                 node.ids = ids
 
-                # class_attr中除了_ids都需要继承，类自身的变量在实例化时判断，暂不考虑
-                if operate_type in ('baseclass', 'aliasclass', 'newclass'):  # 需要新建的类（根类）
-                    config['node'][class_real_name] = node
-
                 check_attr = {}
                 for k in class_attr.keys():
                     check_attr[k] = 'uncheck'
-                setattr(node, ConfigMethod.CLASS_ATTR, class_attr)  # 尽量不要重复，暂存动态属性
-                setattr(node, ConfigMethod.CHECK_ATTR, check_attr)
+                node.class_attr = class_attr
+                node.check_attr = check_attr
+                node.class_base = class_base
+
+                # class_attr中除了_ids都需要继承，类自身的变量在实例化时判断，暂不考虑
+                if operate_type in ('baseclass', 'aliasclass', 'newclass'):  # 需要新建的类（根类）
+                    config['node'][class_real_name] = node
             except Exception:
                 Log.exception()
                 return False, (line_number, line_real, 'Create class failed')
@@ -708,25 +721,18 @@ class Config:
 
         # 将索引从行号替换成对应节点
         for node, deep in root.walk(isroot=False):
-            for key, ids_line in node.ids.items():
+            for ids_key, ids_line in node.ids.items():
                 if not isinstance(ids_line, int):  # 节点已经替换
                     continue
-                node = nest_line[ids_line]
-                node.ids[key] = node
+                node.ids[ids_key] = nest_line.get(ids_line)
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
-            local = dict(node.ids)
-            class_attr = getattr(node, ConfigMethod.CLASS_ATTR)
-            check_attr = getattr(node, ConfigMethod.CHECK_ATTR)
-            for name, attr in class_attr.items():
-                state = check_attr.get(name, 'uncheck')
-
-                if state == 'uncheck':
-                    # print(node.name, name, attr)
-                    is_success, message = node.bind(name, attr, local)
-                    if not is_success:
-                        return False, (line_number, line_real, message)
+            for name in node.class_attr.keys():
+                node.execute(name)
+                # is_success, message = node.execute(name)
+                # if not is_success:
+                #     return False, (line_number, line_real, message)
 
         return True, (root, config)
 
