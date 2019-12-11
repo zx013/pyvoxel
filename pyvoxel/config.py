@@ -312,10 +312,10 @@ class Node:
 class ConfigNode:
     """从配置中解析出的配置节点."""
 
-    def __init__(self, name):
+    def __init__(self, name, ids):
         """初始化."""
         self.name = name  # 类的名称
-        self.ids = {}  # 类的索引
+        self._ids = ids  # 类的索引
         # 存放属性的名称
         # {'name1': ("'testname1'", {}, {}), 'name2': ('__x0 + __s0', {'__x0': 'self.name1'}, {'__s0': 'testname2'})}
         self.class_attr = {}
@@ -330,6 +330,15 @@ class ConfigNode:
         self._children = []
 
     @property
+    def ids(self):
+        """索引映射."""
+        ids = {}
+        for base in self.class_base:
+            ids.update(base.ids)
+        ids.update(self._ids)
+        return self._ids
+
+    @property
     def parent(self):
         """父节点."""
         return self._parent
@@ -337,9 +346,11 @@ class ConfigNode:
     @property
     def children(self):
         """子节点."""
-        # if self.class_base:
-        #     print('base', self.base._children, self._children)
-        return self._children
+        children = []
+        for base in self.class_base:
+            children += base.children
+        children += self._children
+        return children  # self._children
 
     def _walk(self, deep, isroot=True):
         if isroot:
@@ -357,16 +368,12 @@ class ConfigNode:
         """展示节点结构."""
         for node, deep in self.walk(isroot=False):
             spacesep = '    ' * (deep - 1)
-            print(spacesep + '<' + node.__class__.__name__ + '>:')
+            print(spacesep + '<' + node.name + '>:')
             spacesep += '    '
-            for key in dir(node):
-                if key.startswith('_'):
-                    continue
-                if hasattr(getattr(node, key), '__call__'):
-                    continue
-                if key in ('parent', 'children', 'show', 'add_node', 'bind'):
-                    continue
-                print(spacesep + key + ': ' + str(getattr(node, key)))
+            for key, val in node.class_attr.items():
+                if node.check_attr[key] == 'dynamic':
+                    val = val[0]
+                print(spacesep + key + ': ' + str(val))
 
     def add_node(self, node):
         """添加节点."""
@@ -379,6 +386,9 @@ class ConfigNode:
     #  使用bind绑定时，所有的变量必须可访问
     def execute(self, name):
         """将变量绑定到相关的值."""
+        if name not in self.class_attr:
+            print('aaa', name)
+            return self
         attr = self.class_attr[name]
         check = self.check_attr[name]
         if check == 'static':
@@ -416,20 +426,19 @@ class ConfigNode:
                 base_name = plist[-1]
                 local_info[iname] = base_cls.execute(base_name)
 
-            print(expr, local_info)
             value = eval(expr, None, local_info)
             if check == 'static':
                 self.class_attr[name] = value
             elif check == 'dynamic':
                 self.class_attr[name] = value, (expr, xmap, smap)
             self.check_attr[name] = check
-            print('---r---', check, value)
+            print('---r---', check, expr, value, local_info)
             return value
-            # setattr(self, name, value)
         except Exception as ex:
-            print('@@@', expr, ex)
+            print('@@@', expr, local_info, ex)
             Log.exception()
-            return 'uncheck', 'Run expr error'
+            raise Exception
+            return 'Run expr error'
 
         '''
         # 能够正常获取参数值时，写入配置变量
@@ -462,7 +471,7 @@ class Config:
             'node': {}  # 配置文件中新建的类
         }
 
-        root = ConfigNode('root')  # 根节点
+        root = ConfigNode('root', {})  # 根节点
 
         process_data = []  # 预处理后的数据
         nest_class = {}  # 类中包含所有的其他类
@@ -676,9 +685,8 @@ class Config:
                     linen, liner, expr = v
                     class_attr[k] = ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
 
-                node = ConfigNode(class_real_name)
                 ids['self'] = line_number
-                node.ids = ids
+                node = ConfigNode(class_real_name, ids)
 
                 check_attr = {}
                 for k in class_attr.keys():
@@ -819,7 +827,7 @@ if __name__ == '__main__':
     Manager.auto_load()
     config = Config()
     tree = config.load('config/testconfig.vx')
-    # root.show()
+    # tree.show()
     # print(tree.children[2].name)
     # tree.children[1].children[0].name = 'xc'
     # root.show()

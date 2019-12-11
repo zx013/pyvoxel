@@ -20,6 +20,8 @@
     info: info1 + 'abc'
     info1: 'def'
     info2: self
+    info3: c0.c0
+    info4: name[c0.c0.name][0]
     TestWidget1(tw1) -> tw3:
         name: 'name02'
         TestWidget1(tw1):
