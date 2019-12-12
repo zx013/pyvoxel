@@ -384,21 +384,30 @@ class ConfigNode:
 
     #  使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
     #  使用bind绑定时，所有的变量必须可访问
-    def execute(self, name):
-        """将变量绑定到相关的值."""
+    def _execute(self, name):
         if name not in self.class_attr:
-            # eval(name)
-            print('aaa', name)
-            return self
+            ids = self.ids
+            if name in ids:
+                return ids[name]
+            if name == 'root':
+                return
+            if name[0] == 'p':
+                return self.parent
+            if name[0] == 'c':
+                index = name[1:]
+                if index.isdigit():
+                    return self.children[int(index)]
+                return self.children
+            raise Exception
 
-        node, check, attr = self.class_attr[name]
+        line, node, check, attr = self.class_attr[name]
 
         if check in ('static', 'dynamic'):
             return attr[0]
         expr, xmap, smap = attr
 
         if '__import__' in expr:  # literal_eval不能设置locals，因此需要对expr进行判断
-            return False, 'Expr can not use __import__.'
+            raise Exception
 
         try:
             local_info = dict(smap)
@@ -423,16 +432,21 @@ class ConfigNode:
                 rname = 'self' + rname
 
                 base_name = plist[-1]
-                local_info[iname] = base_cls.execute(base_name)
+                local_info[iname] = base_cls._execute(base_name)
 
             value = eval(expr, None, local_info)
-            self.class_attr[name] = node, check, (value, (expr, xmap, smap))
-            print('---r---', check, expr, value, local_info)
+            self.class_attr[name] = line, node, check, (value, (expr, xmap, smap))
             return value
-        except Exception as ex:
-            print('@@@', expr, local_info, ex)
-            Log.exception()
+        except Exception:
             raise Exception
+
+    def execute(self, name):
+        """将变量绑定到相关的值."""
+        try:
+            self._execute(name)
+            return True
+        except Exception:
+            return False
 
         '''
         # 能够正常获取参数值时，写入配置变量
@@ -460,6 +474,14 @@ class Config:
     self: 当前类
     """
 
+    def __init__(self, **kwargs):
+        """
+        设置初始参数.
+
+        unsafe: 是否允许配置是不安全的（配置中引用了配置外的变量），默认为False
+        """
+        self.unsafe = kwargs.get('unsafe', False)
+
     def _load(self, lines, sconfig):
         config = {
             'node': {}  # 配置文件中新建的类
@@ -467,6 +489,7 @@ class Config:
 
         root = ConfigNode('root', {})  # 根节点
 
+        line_map = {}  # 行数对应的具体内容
         process_data = []  # 预处理后的数据
         nest_class = {}  # 类中包含所有的其他类
         nest_key = ()  # 当前的根类
@@ -635,16 +658,19 @@ class Config:
                     operate_type = 'findclass'
                     data = alias_name
 
-                process_data.append((operate_type, line_number, line_real, space, nest_key, class_name, class_alias, data))
+                process_data.append((line_number, operate_type, space, nest_key, class_name, class_alias, data))
                 cursor_line = line_number
                 attr_space = space + 1
+
+            line_map[line_number] = line_real
 
         nest_line = {}  # 节点和行数的对应关系，{12: node1, 13: node2}
         nest_root = {}  # 根节点对应的行数，{T-t: 12, S-s: 13}
         cursor_node = root  # 当前节点
         cursor_space = -1
         for line in process_data:
-            operate_type, line_number, line_real, space, nest_key, class_name, class_alias, data = line
+            line_number, operate_type, space, nest_key, class_name, class_alias, data = line
+            line_real = line_map[line_number]
             if operate_type in ('baseclass', 'aliasclass', 'newclass'):
                 class_real_name = ConfigMethod.real_name(class_name, class_alias)
                 nest_root[class_real_name] = line_number
@@ -679,7 +705,7 @@ class Config:
                 attr = cite_cursor.get(line_number, {})  # 类中的属性
                 for k, v in attr.items():
                     linen, liner, linec, expr = v
-                    class_attr[k] = linec, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
+                    class_attr[k] = linen, linec, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
 
                 ids['self'] = line_number
                 node = ConfigNode(class_real_name, ids)
@@ -731,18 +757,16 @@ class Config:
             for ids_key, ids_line in node._ids.items():
                 node._ids[ids_key] = nest_line.get(ids_line)
             for attr_key, attr_val in node.class_attr.items():
-                attr_line, attr_check, attr = attr_val
-                node.class_attr[attr_key] = nest_line.get(attr_line), attr_check, attr
+                line_number, attr_line, attr_check, attr = attr_val
+                node.class_attr[attr_key] = line_number, nest_line.get(attr_line), attr_check, attr
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
             for name, val in node.class_attr.items():
-                attr_node, attr_check, attr = val
-                # print(node.ids['self'] == attr_node)
-                attr_node.execute(name)
-                # is_success, message = node.execute(name)
-                # if not is_success:
-                #     return False, (line_number, line_real, message)
+                line_number, attr_node, attr_check, attr = val
+                line_real = line_map[line_number]
+                if not attr_node.execute(name) and not self.unsafe:
+                    return False, (line_number, line_real, 'Attr is unsafe')
 
         return True, (root, config)
 

@@ -19,7 +19,7 @@
     name: {'g\'h"\""i{}{}'.format(self.c0.name, '''xc'''): tw3.name, c0.c0.name: [c0.p.c0.name + info + info1]}
     info: info1 + 'abc'
     info1: 'def'
-    info2: self
+    info2: [self, root, tw3]
     info3: c0.c0
     info4: name[c0.c0.name][0]
     TestWidget1(tw1) -> tw3:
