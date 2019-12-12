@@ -332,11 +332,11 @@ class ConfigNode:
     @property
     def ids(self):
         """索引映射."""
-        ids = {}
+        # 基类的引用的覆盖现有的引用，确保基类的引用有效
+        ids = dict(self._ids)
         for base in self.class_base:
             ids.update(base.ids)
-        ids.update(self._ids)
-        return self._ids
+        return ids
 
     @property
     def parent(self):
@@ -355,7 +355,7 @@ class ConfigNode:
     def _walk(self, deep, isroot=True):
         if isroot:
             yield self, deep
-        for child in self.children:
+        for child in self._children:
             for node, node_deep in child._walk(deep + 1):
                 yield node, node_deep
 
@@ -387,14 +387,13 @@ class ConfigNode:
     def execute(self, name):
         """将变量绑定到相关的值."""
         if name not in self.class_attr:
+            # eval(name)
             print('aaa', name)
             return self
-        attr = self.class_attr[name]
-        check = self.check_attr[name]
-        if check == 'static':
-            return attr
-        elif check == 'dynamic':
-            print("***", attr)
+
+        node, check, attr = self.class_attr[name]
+
+        if check in ('static', 'dynamic'):
             return attr[0]
         expr, xmap, smap = attr
 
@@ -410,35 +409,30 @@ class ConfigNode:
                 plist = pname.split('.')
                 base_cls = self.ids[plist[0]]
 
-                for node in plist[1:-1]:
-                    if node.startswith('p'):
+                for pn in plist[1:-1]:
+                    if pn.startswith('p'):
                         for n, c in enumerate(base_cls.parent.children):
                             if c == base_cls:
                                 break
                         rname = '.c{}{}'.format(n, rname)
                         base_cls = base_cls.parent
-                    elif node.startswith('c'):
+                    elif pn.startswith('c'):
                         rname = '.p{}'.format(rname)
 
-                        base_cls = base_cls.children[int(node[1:])]
+                        base_cls = base_cls.children[int(pn[1:])]
                 rname = 'self' + rname
 
                 base_name = plist[-1]
                 local_info[iname] = base_cls.execute(base_name)
 
             value = eval(expr, None, local_info)
-            if check == 'static':
-                self.class_attr[name] = value
-            elif check == 'dynamic':
-                self.class_attr[name] = value, (expr, xmap, smap)
-            self.check_attr[name] = check
+            self.class_attr[name] = node, check, (value, (expr, xmap, smap))
             print('---r---', check, expr, value, local_info)
             return value
         except Exception as ex:
             print('@@@', expr, local_info, ex)
             Log.exception()
             raise Exception
-            return 'Run expr error'
 
         '''
         # 能够正常获取参数值时，写入配置变量
@@ -480,7 +474,7 @@ class Config:
 
         cursor_line = 0  # 当前类所在的行
 
-        cite_class = {}  # 根类内部的引用
+        cite_class = {}  # 根类内部的引用，{('T1', 't'): {'t1': 25}, ('T2', '__ALIAS__'): {'t1': 36, 't2': 37}}
         cite_cursor = {}  # 统计所有类的属性，行号索引，类名索引会重复
 
         attr_space = -1  # 属性对应的缩进
@@ -531,7 +525,7 @@ class Config:
 
                 # 统计类的属性，按行号索引
                 cite_cursor.setdefault(cursor_line, {})
-                cite_cursor[cursor_line][key] = (line_number, line_real, val)
+                cite_cursor[cursor_line][key] = (line_number, line_real, cursor_line, val)
                 # 属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
                 # operate_type = 'attr'
                 # process_data[line_number] = (operate_type, line_number, line_real, space, key, (is_expr, val))
@@ -627,6 +621,8 @@ class Config:
                     nest_class[nest_key].add(class_split)
                     if class_alias != ConfigMethod.BASE_ALIAS:  # 统计子节点的别名
                         cite_class.setdefault(nest_key, {})
+                        if class_alias in cite_class[nest_key]:  # 同一个根类中的别名不能重复
+                            return False, (line_number, line_real, 'Alias can not same')
                         cite_class[nest_key][class_alias] = line_number  # class_split
 
                     if not ConfigMethod.legal_alias(alias_name):  # 别名索引不合法
@@ -682,22 +678,25 @@ class Config:
                 # 类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
                 attr = cite_cursor.get(line_number, {})  # 类中的属性
                 for k, v in attr.items():
-                    linen, liner, expr = v
-                    class_attr[k] = ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
+                    linen, liner, linec, expr = v
+                    class_attr[k] = linec, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
 
                 ids['self'] = line_number
                 node = ConfigNode(class_real_name, ids)
 
-                check_attr = {}
-                for k in class_attr.keys():
-                    check_attr[k] = 'uncheck'
                 node.class_attr = class_attr
-                node.check_attr = check_attr
                 node.class_base = class_base
 
                 # class_attr中除了_ids都需要继承，类自身的变量在实例化时判断，暂不考虑
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'):  # 需要新建的类（根类）
                     config['node'][class_real_name] = node
+                else:
+                    base_ids = {}
+                    for base in node.class_base:
+                        base_ids.update(base.ids)
+                    check_ids = set(base_ids) & set(ids) - set(('root', 'self'))
+                    if check_ids:  # 别名存在于根类中
+                        return False, (line_number, line_real, 'Alias already in base class')
             except Exception:
                 Log.exception()
                 return False, (line_number, line_real, 'Create class failed')
@@ -718,7 +717,7 @@ class Config:
                 rootnode = node
                 while rootnode.parent.parent:
                     rootnode = rootnode.parent
-                node.ids['root'] = nest_root[rootnode.name]
+                node._ids['root'] = nest_root[rootnode.name]
             except Exception:
                 Log.exception()
                 return False, (line_number, line_real, 'Get root class failed')
@@ -727,17 +726,20 @@ class Config:
             cursor_node = node
             cursor_space = space
 
-        # 将索引从行号替换成对应节点
+        # 将索引从行号替换成对应节点，不遍历基类的子节点
         for node, deep in root.walk(isroot=False):
-            for ids_key, ids_line in node.ids.items():
-                if not isinstance(ids_line, int):  # 节点已经替换
-                    continue
-                node.ids[ids_key] = nest_line.get(ids_line)
+            for ids_key, ids_line in node._ids.items():
+                node._ids[ids_key] = nest_line.get(ids_line)
+            for attr_key, attr_val in node.class_attr.items():
+                attr_line, attr_check, attr = attr_val
+                node.class_attr[attr_key] = nest_line.get(attr_line), attr_check, attr
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
-            for name in node.class_attr.keys():
-                node.execute(name)
+            for name, val in node.class_attr.items():
+                attr_node, attr_check, attr = val
+                # print(node.ids['self'] == attr_node)
+                attr_node.execute(name)
                 # is_success, message = node.execute(name)
                 # if not is_success:
                 #     return False, (line_number, line_real, message)
@@ -814,13 +816,19 @@ class Config:
 
 if __name__ == '__main__':
     class TestWidget:
+        """TestWidget."""
+
         pass
 
     class TestWidget05:
+        """TestWidget05."""
+
         def __init__(self):
+            """__init__."""
             print('init')
 
         def testwidget05(self):
+            """testwidget05."""
             pass
     TestWidget05.__name__ = 'abc'
 

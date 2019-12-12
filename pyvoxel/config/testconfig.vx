@@ -34,6 +34,6 @@
 
 <TestWidget05>:
     TestWidget1(tw1) -> tw1:
-    TestWidget(tw2) -> tw3:
+    TestWidget(tw2) -> tw4:
     TestWidget(tw3) -> tw2:
     #TestWidget:
