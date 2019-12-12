@@ -14,6 +14,13 @@ class ConfigMethod:
     LEGAL_ALIAS = 'abcdefghijklmnopqrstuvwxyz0123456789_'
     LEGAL_VAR = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'
 
+    # 属性注解
+    NOTE_INFO = {
+        'safe': ('safe', 'unsafe'),  # 安全/不安全，属性是否需要安全检查，默认同全局的安全设置
+        'state': ('static', 'dynamic'),  # 静态/动态，属性是否是静态属性（不使用外部变量进行动态计算）
+        'index': ('selfindex', 'baseindex')  # 动态属性索引和子节点访问优先使用的方式（自身的类，来源的基类）
+    }
+
     BASE_ALIAS = '__ALIAS__'  # 默认别名，使用大写保证和其他别名不相同
     CLASS_SPLIT = '-'  # 类和别名之间的分割符必须是非法的别名字符
 
@@ -68,6 +75,43 @@ class ConfigMethod:
         return True
 
     @classmethod
+    def split_note(self, name):
+        """解析属性中的注解."""
+        if name.endswith(')'):
+            name = name[:-1]
+
+            split_line = self.strip_split(name, '(', 1)
+            if len(split_line) == 1:
+                return False, 'No ( find in attr note'
+
+            var_name, note_name = split_line
+            if not self.legal_var(var_name):  # 类命不合法
+                return False, 'Attr note is illegal'
+
+            if not note_name:  # 括号里为空
+                return False, 'Attr note is empty'
+
+            note_info = {}
+            for nname in note_name:
+                for key in self.NOTE_INFO.keys():
+                    if nname not in self.NOTE_INFO[key]:
+                        continue
+                    if key in note_info:
+                        return False, 'Attr note {} redefine'.format(key)
+                    note_info[key] = nname
+                    break
+                else:  # 都不属于其它的类型
+                    if 'type' in note_info:
+                        return False, 'Attr note type redefine'
+                    note_info['type'] = nname
+
+            return True, (var_name, note_name)
+
+        if not self.legal_var(name):  # 类命不合法
+            return False, 'Attr note is illegal'
+        return True, (name, ())
+
+    @classmethod
     def split_alias(self, name):
         """分割形如T(t)的别名."""
         if name.endswith(')'):
@@ -79,7 +123,7 @@ class ConfigMethod:
 
             class_name, alias_name = split_line
             if not self.legal_class(class_name):  # 类命不合法
-                return False, 'Class is illegal ' + str(class_name)
+                return False, 'Class is illegal'
 
             if not alias_name:  # 括号里为空
                 return False, 'Alias is empty'
@@ -543,6 +587,13 @@ class Config:
                 if space != attr_space:  # 属性值必须跟在类定义后面
                     return False, (line_number, line_real, 'Attribute must follow class')
 
+                '''
+                参数注解
+                safe/unsafe: 安全/不安全，属性是否需要安全检查
+                static/dynamic: 静态/动态，属性是否是静态属性（不使用外部变量进行动态计算）
+                int/float/tuple/list/dict/object: 属性的类型
+                inherit: 动态属性索引优先使用的方式（自身的类，来源的基类）
+                '''
                 if not ConfigMethod.legal_var(key):
                     return False, (line_number, line_real, 'Var is illegal')
 
