@@ -478,7 +478,7 @@ class Config:
         """
         设置初始参数.
 
-        unsafe: 是否允许配置是不安全的（配置中引用了配置外的变量），默认为False
+        unsafe: 是否允许配置是不安全的（属性中引用了作用域外的变量），默认为False，开启unsafe选项同样会忽略属性中的语法错误和表达式的安全性检查
         """
         self.unsafe = kwargs.get('unsafe', False)
 
@@ -765,6 +765,7 @@ class Config:
             for name, val in node.class_attr.items():
                 line_number, attr_node, attr_check, attr = val
                 line_real = line_map[line_number]
+                # 继承后属性未被覆盖则使用继承前的属性进行计算
                 if not attr_node.execute(name) and not self.unsafe:
                     return False, (line_number, line_real, 'Attr is unsafe')
 
