@@ -16,9 +16,18 @@ class ConfigMethod:
 
     # 属性注解
     NOTE_INFO = {
-        'safe': ('safe', 'unsafe'),  # 安全/不安全，属性是否需要安全检查，默认同全局的安全设置
+        'safe': ('safe', 'unsafe'),  # 安全/不安全，属性是否需要安全检查，不设置的使用全局安全设置
         'state': ('static', 'dynamic'),  # 静态/动态，属性是否是静态属性（不使用外部变量进行动态计算）
-        'index': ('selfindex', 'baseindex')  # 动态属性索引和子节点访问优先使用的方式（自身的类，来源的基类）
+        # 动态属性索引和子节点访问优先使用的方式，自身的类(selfindex)，来源的基类(baseindex，默认)
+        'index': ('selfindex', 'baseindex'),
+        # 子节点访问顺序，先访问自身子节点(selfchild)，先访问基类子节点(basechild，默认)
+        # index设置为selfindex时生效，若index为baseindex，会将self解析到基类中
+        'child': ('selfchild', 'basechild'),
+        # python内建的数据类型
+        # 'dict', 'complex', 'property', 'enumerate', 'bytes', 'filter', 'reversed', 'super', 'range'
+        # 'object', 'frozenset', 'map', 'set', 'zip', 'type', 'str', 'memoryview', 'staticmethod',
+        # 'float', 'bool', 'classmethod', 'int', 'tuple', 'list', 'bytearray', 'slice'
+        'type': {k for k, v in globals()['__builtins__'].items() if k[0].islower() and isinstance(v, type)}
     }
 
     BASE_ALIAS = '__ALIAS__'  # 默认别名，使用大写保证和其他别名不相同
@@ -92,7 +101,7 @@ class ConfigMethod:
                 return False, 'Attr note is empty'
 
             note_info = {}
-            for nname in note_name:
+            for nname in self.strip_split(note_name, '|'):
                 for key in self.NOTE_INFO.keys():
                     if nname not in self.NOTE_INFO[key]:
                         continue
@@ -100,16 +109,18 @@ class ConfigMethod:
                         return False, 'Attr note {} redefine'.format(key)
                     note_info[key] = nname
                     break
-                else:  # 都不属于其它的类型
-                    if 'type' in note_info:
+                else:  # 都不属于其它的类型，other为自定义的type类型
+                    if 'other' in note_info or 'type' in note_info:
                         return False, 'Attr note type redefine'
-                    note_info['type'] = nname
+                    if not self.legal_class(nname):  # 检查注解名称的合法性，注解中不能使用别名等索引
+                        return False, 'Attr note class is illegal'
+                    note_info['other'] = nname
 
-            return True, (var_name, note_name)
+            return True, (var_name, note_info)
 
         if not self.legal_var(name):  # 类命不合法
             return False, 'Attr note is illegal'
-        return True, (name, ())
+        return True, (name, {})
 
     @classmethod
     def split_alias(self, name):
@@ -368,8 +379,8 @@ class ConfigNode:
         self.check_attr = {}
         self.class_base = []  # 继承的父类对应的节点
 
-        self.trigger = {}
-        self.reflex = {}
+        # self.trigger = {}
+        # self.reflex = {}
         self._parent = None
         self._children = []
 
@@ -380,6 +391,26 @@ class ConfigNode:
         ids = dict(self._ids)
         for base in self.class_base:
             ids.update(base.ids)
+        return ids
+
+    def get_note(self, name, ntype, nbase):
+        """获取索引注解."""
+        if name not in self.class_attr:
+            return nbase
+        line, node, note, check, attr = self.class_attr[name]
+        return note.get(ntype, nbase)
+
+    def get_ids(self, name):
+        """根据注解获取索引映射."""
+        if self.get_note(name, 'index', 'baseindex') == 'baseindex':
+            ids = dict(self._ids)
+            for base in self.class_base:
+                ids.update(base.get_ids(name))
+        else:
+            ids = {}
+            for base in self.class_base:
+                ids.update(base.get_ids(name))
+            ids = dict(self._ids)
         return ids
 
     @property
@@ -395,6 +426,19 @@ class ConfigNode:
             children += base.children
         children += self._children
         return children  # self._children
+
+    def get_children(self, name):
+        """根据注解获取子节点."""
+        if self.get_note(name, 'child', 'basechild') == 'basechild':
+            children = []
+            for base in self.class_base:
+                children += base.children
+            children += self._children
+        else:
+            children = list(self._children)
+            for base in self.class_base:
+                children += base.children
+        return children
 
     def _walk(self, deep, isroot=True):
         if isroot:
@@ -430,7 +474,7 @@ class ConfigNode:
     #  使用bind绑定时，所有的变量必须可访问
     def _execute(self, name):
         if name not in self.class_attr:
-            ids = self.ids
+            ids = self.get_ids(name)
             if name in ids:
                 return ids[name]
             if name == 'root':
@@ -439,12 +483,14 @@ class ConfigNode:
                 return self.parent
             if name[0] == 'c':
                 index = name[1:]
+                children = self.get_children(name)
                 if index.isdigit():
-                    return self.children[int(index)]
-                return self.children
+                    return children[int(index)]
+                return children
             raise Exception
 
-        line, node, check, attr = self.class_attr[name]
+        # 行号，来源节点，注解，校验标志，属性
+        line, node, note, check, attr = self.class_attr[name]
 
         if check in ('static', 'dynamic'):
             return attr[0]
@@ -460,11 +506,11 @@ class ConfigNode:
                 # 定位变量所在的类
                 rname = ''  # 逆向索引字符串
                 plist = pname.split('.')
-                base_cls = self.ids[plist[0]]
+                base_cls = self.get_ids(name)[plist[0]]
 
                 for pn in plist[1:-1]:
                     if pn.startswith('p'):
-                        for n, c in enumerate(base_cls.parent.children):
+                        for n, c in enumerate(base_cls.parent.get_children(name)):
                             if c == base_cls:
                                 break
                         rname = '.c{}{}'.format(n, rname)
@@ -472,16 +518,17 @@ class ConfigNode:
                     elif pn.startswith('c'):
                         rname = '.p{}'.format(rname)
 
-                        base_cls = base_cls.children[int(pn[1:])]
+                        base_cls = base_cls.get_children(name)[int(pn[1:])]
                 rname = 'self' + rname
 
                 base_name = plist[-1]
                 local_info[iname] = base_cls._execute(base_name)
 
             value = eval(expr, None, local_info)
-            self.class_attr[name] = line, node, check, (value, (expr, xmap, smap))
+            self.class_attr[name] = line, node, note, check, (value, (expr, xmap, smap))
             return value
         except Exception:
+            Log.exception()
             raise Exception
 
     def execute(self, name):
@@ -587,19 +634,14 @@ class Config:
                 if space != attr_space:  # 属性值必须跟在类定义后面
                     return False, (line_number, line_real, 'Attribute must follow class')
 
-                '''
-                参数注解
-                safe/unsafe: 安全/不安全，属性是否需要安全检查
-                static/dynamic: 静态/动态，属性是否是静态属性（不使用外部变量进行动态计算）
-                int/float/tuple/list/dict/object: 属性的类型
-                inherit: 动态属性索引优先使用的方式（自身的类，来源的基类）
-                '''
-                if not ConfigMethod.legal_var(key):
-                    return False, (line_number, line_real, 'Var is illegal')
+                is_success, result = ConfigMethod.split_note(key)  # 解析参数注解
+                if not is_success:
+                    return False, (line_number, line_real, result)
+                name, note = result
 
                 # 统计类的属性，按行号索引
                 cite_cursor.setdefault(cursor_line, {})
-                cite_cursor[cursor_line][key] = (line_number, line_real, cursor_line, val)
+                cite_cursor[cursor_line][name] = (line_number, line_real, cursor_line, note, val)
                 # 属性分为动态属性和静态属性，动态属性在该属性在引用的其他属性变化时动态变化
                 # operate_type = 'attr'
                 # process_data[line_number] = (operate_type, line_number, line_real, space, key, (is_expr, val))
@@ -755,8 +797,13 @@ class Config:
                 # 类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
                 attr = cite_cursor.get(line_number, {})  # 类中的属性
                 for k, v in attr.items():
-                    linen, liner, linec, expr = v
-                    class_attr[k] = linen, linec, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
+                    linen, liner, linec, note, expr = v
+
+                    # 检查注解中的类是否存在
+                    if 'other' in note and note['other'] not in set(config['node']) | sconfig['plugins']:
+                        return False, (linen, liner, 'Attr note not exist')
+                    # 当前行号，类所在的行号，检查标志，表达式解析结果
+                    class_attr[k] = linen, linec, note, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
 
                 ids['self'] = line_number
                 node = ConfigNode(class_real_name, ids)
@@ -808,16 +855,19 @@ class Config:
             for ids_key, ids_line in node._ids.items():
                 node._ids[ids_key] = nest_line.get(ids_line)
             for attr_key, attr_val in node.class_attr.items():
-                line_number, attr_line, attr_check, attr = attr_val
-                node.class_attr[attr_key] = line_number, nest_line.get(attr_line), attr_check, attr
+                line_number, attr_line, attr_note, attr_check, attr = attr_val
+                node.class_attr[attr_key] = line_number, nest_line.get(attr_line), attr_note, attr_check, attr
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
             for name, val in node.class_attr.items():
-                line_number, attr_node, attr_check, attr = val
+                line_number, attr_node, attr_note, attr_check, attr = val
                 line_real = line_map[line_number]
+
+                # safe注解
+                safe = attr_note.get('safe', 'unsafe' if self.unsafe else 'safe')
                 # 继承后属性未被覆盖则使用继承前的属性进行计算
-                if not attr_node.execute(name) and not self.unsafe:
+                if not node.execute(name) and safe == 'safe':
                     return False, (line_number, line_real, 'Attr is unsafe')
 
         return True, (root, config)
