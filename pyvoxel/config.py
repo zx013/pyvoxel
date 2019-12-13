@@ -379,6 +379,8 @@ class ConfigNode:
         self.check_attr = {}
         self.class_base = []  # 继承的父类对应的节点
 
+        self.trigger = {}
+        self.reflex = {}
         self._parent = None
         self._children = []
 
@@ -533,6 +535,9 @@ class ConfigNode:
         except Exception:
             return False
 
+    def add_trigger(self, attr, note):
+        """添加触发器."""
+        pass
         '''
         # 能够正常获取参数值时，写入配置变量
         reflex = {}
@@ -878,6 +883,10 @@ class Config:
 
                 # if 'other' in attr_note:
                 #     print(attr[0].__class__.__name__)
+
+                # 动态属性添加触发器
+                if attr_check == 'dynamic':
+                    node.add_trigger(attr, attr_note)
 
         return True, (root, config)
 
