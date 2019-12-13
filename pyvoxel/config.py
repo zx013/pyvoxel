@@ -379,8 +379,6 @@ class ConfigNode:
         self.check_attr = {}
         self.class_base = []  # 继承的父类对应的节点
 
-        # self.trigger = {}
-        # self.reflex = {}
         self._parent = None
         self._children = []
 
@@ -397,7 +395,7 @@ class ConfigNode:
         """获取索引注解."""
         if name not in self.class_attr:
             return nbase
-        line, node, note, check, attr = self.class_attr[name]
+        line, note, check, attr = self.class_attr[name]
         return note.get(ntype, nbase)
 
     def get_ids(self, name):
@@ -490,7 +488,7 @@ class ConfigNode:
             raise Exception
 
         # 行号，来源节点，注解，校验标志，属性
-        line, node, note, check, attr = self.class_attr[name]
+        line, note, check, attr = self.class_attr[name]
 
         if check in ('static', 'dynamic'):
             return attr[0]
@@ -499,37 +497,33 @@ class ConfigNode:
         if '__import__' in expr:  # literal_eval不能设置locals，因此需要对expr进行判断
             raise Exception
 
-        try:
-            local_info = dict(smap)
-            check = 'static' if xmap == {} else 'dynamic'
-            for iname, pname in xmap.items():
-                # 定位变量所在的类
-                rname = ''  # 逆向索引字符串
-                plist = pname.split('.')
-                base_cls = self.get_ids(name)[plist[0]]
+        local_info = dict(smap)
+        check = 'static' if xmap == {} else 'dynamic'
+        for iname, pname in xmap.items():
+            # 定位变量所在的类
+            rname = ''  # 逆向索引字符串
+            plist = pname.split('.')
+            base_cls = self.get_ids(name)[plist[0]]
 
-                for pn in plist[1:-1]:
-                    if pn.startswith('p'):
-                        for n, c in enumerate(base_cls.parent.get_children(name)):
-                            if c == base_cls:
-                                break
-                        rname = '.c{}{}'.format(n, rname)
-                        base_cls = base_cls.parent
-                    elif pn.startswith('c'):
-                        rname = '.p{}'.format(rname)
+            for pn in plist[1:-1]:
+                if pn.startswith('p'):
+                    for n, c in enumerate(base_cls.parent.get_children(name)):
+                        if c == base_cls:
+                            break
+                    rname = '.c{}{}'.format(n, rname)
+                    base_cls = base_cls.parent
+                elif pn.startswith('c'):
+                    rname = '.p{}'.format(rname)
 
-                        base_cls = base_cls.get_children(name)[int(pn[1:])]
-                rname = 'self' + rname
+                    base_cls = base_cls.get_children(name)[int(pn[1:])]
+            rname = 'self' + rname
 
-                base_name = plist[-1]
-                local_info[iname] = base_cls._execute(base_name)
+            base_name = plist[-1]
+            local_info[iname] = base_cls._execute(base_name)
 
-            value = eval(expr, None, local_info)
-            self.class_attr[name] = line, node, note, check, (value, (expr, xmap, smap))
-            return value
-        except Exception:
-            Log.exception()
-            raise Exception
+        value = eval(expr, None, local_info)
+        self.class_attr[name] = line, note, check, (value, (expr, xmap, smap))
+        return value
 
     def execute(self, name):
         """将变量绑定到相关的值."""
@@ -802,8 +796,8 @@ class Config:
                     # 检查注解中的类是否存在
                     if 'other' in note and note['other'] not in set(config['node']) | sconfig['plugins']:
                         return False, (linen, liner, 'Attr note not exist')
-                    # 当前行号，类所在的行号，检查标志，表达式解析结果
-                    class_attr[k] = linen, linec, note, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
+                    # 当前行号，检查标志，表达式解析结果
+                    class_attr[k] = linen, note, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
 
                 ids['self'] = line_number
                 node = ConfigNode(class_real_name, ids)
@@ -854,21 +848,27 @@ class Config:
         for node, deep in root.walk(isroot=False):
             for ids_key, ids_line in node._ids.items():
                 node._ids[ids_key] = nest_line.get(ids_line)
-            for attr_key, attr_val in node.class_attr.items():
-                line_number, attr_line, attr_note, attr_check, attr = attr_val
-                node.class_attr[attr_key] = line_number, nest_line.get(attr_line), attr_note, attr_check, attr
+            # for attr_key, attr_val in node.class_attr.items():
+            #     line_number, attr_line, attr_note, attr_check, attr = attr_val
+            #     node.class_attr[attr_key] = line_number, nest_line.get(attr_line), attr_note, attr_check, attr
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
-            for name, val in node.class_attr.items():
-                line_number, attr_node, attr_note, attr_check, attr = val
+            for name in node.class_attr.keys():
+                line_number, attr_note, attr_check, attr = node.class_attr[name]
                 line_real = line_map[line_number]
 
-                # safe注解
+                # 以safe注解为准，未设置则使用默认safe配置
                 safe = attr_note.get('safe', 'unsafe' if self.unsafe else 'safe')
                 # 继承后属性未被覆盖则使用继承前的属性进行计算
                 if not node.execute(name) and safe == 'safe':
                     return False, (line_number, line_real, 'Attr is unsafe')
+
+                # 设置了state注解才进行检查
+                line_number, attr_note, attr_check, attr = node.class_attr[name]
+                if 'state' in attr_note and attr_check not in ('uncheck', attr_note['state']):
+                    return False, (line_number, line_real, 'Attr state is incorrect')
+                # print(node.class_attr[name])
 
         return True, (root, config)
 
