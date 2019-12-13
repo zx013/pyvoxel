@@ -864,11 +864,20 @@ class Config:
                 if not node.execute(name) and safe == 'safe':
                     return False, (line_number, line_real, 'Attr is unsafe')
 
-                # 设置了state注解才进行检查
                 line_number, attr_note, attr_check, attr = node.class_attr[name]
-                if 'state' in attr_note and attr_check not in ('uncheck', attr_note['state']):
+                if attr_check == 'uncheck':  # uncheck字段不进行检查
+                    continue
+
+                # 设置了state注解才进行检查
+                if 'state' in attr_note and attr_check != attr_note['state']:
                     return False, (line_number, line_real, 'Attr state is incorrect')
-                # print(node.class_attr[name])
+
+                # 设置了type注解才进行检查
+                if 'type' in attr_note and attr[0].__class__.__name__ != attr_note['type']:
+                    return False, (line_number, line_real, 'Attr type is incorrect')
+
+                # if 'other' in attr_note:
+                #     print(attr[0].__class__.__name__)
 
         return True, (root, config)
 
@@ -960,7 +969,7 @@ if __name__ == '__main__':
 
     Manager.auto_load()
     config = Config()
-    tree = config.load('config/testconfig.vx')
+    tree = config.load('config/testconfig.pv')
     # tree.show()
     # print(tree.children[2].name)
     # tree.children[1].children[0].name = 'xc'
