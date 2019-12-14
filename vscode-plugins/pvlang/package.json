@@ -1,0 +1,30 @@
+{
+    "name": "pvlang",
+    "displayName": "pvlang",
+    "description": "",
+    "version": "0.0.1",
+    "engines": {
+        "vscode": "^1.41.0"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "contributes": {
+        "languages": [{
+            "id": "pvlang",
+            "aliases": ["pyvoxel-language", "pvlang"],
+            "extensions": [".pv"],
+            "configuration": "./language-configuration.json"
+        }],
+        "grammars": [{
+            "language": "pvlang",
+            "scopeName": "source.pv",
+            "path": "./syntaxes/pvlang.tmLanguage.json"
+        }],
+        "themes": [{
+                "label": "pvtheme",
+                "uiTheme": "vs",
+                "path": "./themes/pvtheme-color-theme.json"
+        }]
+    }
+}

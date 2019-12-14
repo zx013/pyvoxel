@@ -1,0 +1,113 @@
+{
+	"$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+	"name": "pyvoxel-language",
+	"patterns": [
+		{"include": "#keywords"},
+		{"include": "#strings"},
+		{"include": "#comment"},
+		{"include": "#defineclass"},
+		{"include": "#findclass"},
+		{"include": "#alias"},
+		{"include": "#attr"},
+		{"include": "#notekeys"},
+		{"include": "#note"}
+	],
+	"repository": {
+		"keywords": {
+			"patterns": [{
+				"name": "keyword.control.pvlang",
+				"match": "\\b(self|root|True|False)\\b"
+			}]
+		},
+		"strings": {
+			"patterns": [
+				{
+					"name": "string",
+					"match": "\\'{2}"
+				},
+				{
+					"name": "string",
+					"match": "\\'.*?[^\\\\]\\'"
+				},
+				{
+					"name": "string",
+					"match": "\\\"{2}"
+				},
+				{
+					"name": "string",
+					"match": "\\\".*?[^\\\\]\\\""
+				}
+			]
+		},
+		"comment": {
+			"name": "comment",
+			"match": "#.*"
+		},
+		"defineclass": {
+			"begin": "^<+[A-Z]\\w*",
+			"end": ">[ ]*:",
+			"beginCaptures": {
+				"0": { "name": "entity.name.type" }
+			},
+			"endCaptures": {
+				"0": { "name": "entity.name.type" }
+			},
+			"patterns": [
+				{
+					"name": "variable",
+					"match": "\\b\\w+\\b"
+				},
+				{
+					"name": "variable",
+					"match": "\\(|\\)|,"
+				},
+				{
+					"name": "constant",
+					"match": "->"
+				}
+			]
+		},
+		"findclass": {
+			"begin": "^(    )+[A-Z]\\w*",
+			"end": ":",
+			"beginCaptures": {
+				"0": { "name": "entity.name.function" }
+			},
+			"patterns": [
+				{
+					"name": "punctuation.definition.variable",
+					"match": "\\b\\w+\\b"
+				},
+				{
+					"name": "punctuation.definition.variable",
+					"match": "\\(|\\)"
+				},
+				{
+					"name": "constant",
+					"match": "->"
+				}
+			]
+		  },
+		"alias": {
+			"name": "string.regexp",
+			"match": "[A-Z]\\w+\\([a-z0-9_]+\\)"
+		},
+		"note": {
+			"begin": "^(    )+[a-z0-9_]+",
+			"end": ":",
+			"beginCaptures": {
+				"0": { "name": "constant.language" }
+			},
+			"endCaptures": {
+				"0": { "name": "constant.other.symbol" }
+			},
+			"patterns": [
+				{
+					"name": "meta.tag",
+					"match": "\\b(safe|unsafe|static|dynamic|selfindex|baseindex|selfchild|basechild|dict|complex|property|enumerate|bytes|filter|reversed|super|range|object|frozenset|map|set|zip|type|str|memoryview|staticmethod|float|bool|classmethod|int|tuple|list|bytearray|slice)\\b"
+				}
+			]
+		}
+	},
+	"scopeName": "source.pv"
+}
