@@ -379,8 +379,13 @@ class ConfigNode:
         self.check_attr = {}
         self.class_base = []  # 继承的父类对应的节点
 
+        # 保存变量触发的逻辑{'info01': {'self.p': {'info02': '__x0'}}}
+        # 类中的属性info01改变时，通过self.p定位到响应的类（实例化时，该键值初始化响应类的实例），修改响应类中的变量info02
+        # 变量info02对应的表达式中使用的info01变量，对应在表达式中的符号为__x0
         self.trigger = {}
-        self.reflex = {}
+        # 接收触发器产生的事件{'info02': (__x0 + __s0, {'__x0': 'self.c0.info1'}, {'__s0': 'infos'})}
+        # 计算属性值的表达式expr，变量映射xmap（实例化时，映射值初始化为对应的值），字符串映射smap
+        self.receiver = {}
         self._parent = None
         self._children = []
 
@@ -499,6 +504,7 @@ class ConfigNode:
         if '__import__' in expr:  # literal_eval不能设置locals，因此需要对expr进行判断
             raise Exception
 
+        rmap = {}
         local_info = dict(smap)
         check = 'static' if xmap == {} else 'dynamic'
         for iname, pname in xmap.items():
@@ -521,10 +527,21 @@ class ConfigNode:
             rname = 'self' + rname
 
             base_name = plist[-1]
+            if len(plist) > 1:  # 类的引用不会被主动改变，只有类的属性改变时才触发
+                rmap.setdefault((base_cls, base_name), [])
+                rmap[(base_cls, base_name)].append((iname, pname, rname, name))
+
             local_info[iname] = base_cls._execute(base_name)
 
         value = eval(expr, None, local_info)
         self.class_attr[name] = line, note, check, (value, (expr, xmap, smap))
+
+        # 动态属性添加触发器，执行成功后添加触发器
+        if check == 'dynamic':
+            for key, val in rmap.items():
+                base_cls, base_name = key
+                for iname, pname, rname, name in val:
+                    base_cls.trigger.setdefault(base_name, {}).setdefault(rname, {})[name] = iname
         return value
 
     def execute(self, name):
@@ -534,21 +551,6 @@ class ConfigNode:
             return True
         except Exception:
             return False
-
-    def add_trigger(self, attr, note):
-        """添加触发器."""
-        pass
-        '''
-        # 能够正常获取参数值时，写入配置变量
-        reflex = {}
-        for key, val in pattern.items():
-            base_cls, base_name = key
-            iname, pname, rname = val
-            base_cls._trigger.setdefault(base_name, set())
-            base_cls._trigger[base_name].add('{}.{}'.format(rname, name) if rname else name)
-            reflex['{}.{}'.format(pname, base_name) if pname else base_name] = iname
-        self._reflex[name] = (expr, reflex, local)
-        '''
 
 
 class Config:
@@ -883,10 +885,6 @@ class Config:
 
                 # if 'other' in attr_note:
                 #     print(attr[0].__class__.__name__)
-
-                # 动态属性添加触发器
-                if attr_check == 'dynamic':
-                    node.add_trigger(attr, attr_note)
 
         return True, (root, config)
 
