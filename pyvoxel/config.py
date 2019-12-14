@@ -189,6 +189,20 @@ class ConfigMethod:
             return config['node'][name]
         return None
 
+    @classmethod
+    def check_parent_class(self, base, deep=0):
+        """检查base继承的节点中是否包含Node类."""
+        if deep > 32:  # 类层级太多或者循环继承
+            return False
+        if base == Node:
+            return True
+        if base == object:
+            return False
+        for b in base.__bases__:
+            if self.check_parent_class(b, deep + 1):
+                return True
+        return False
+
     @staticmethod
     def analyse(expr, localkeys=()):
         """解析expr表达式，localkeys为引用的别名列表."""
@@ -303,18 +317,18 @@ class Node:
     @classmethod
     def _init(cls):
         cls._trigger = {}
-        cls._reflex = {}
+        cls._responder = {}
         cls.parent = None
         cls.children = []
         if not hasattr(cls, '_config'):
             return
 
-        name, root, sconfig, config = getattr(cls, '_config')
-        node = config['newnode'][name]
-        print(node, name, node.__class__.__name__)
+        # name, root, sconfig, config = getattr(cls, '_config')
+        # node = config['newnode'][name]
+        # print(node, name, node.__class__.__name__)
 
-        for child in node.children:
-            pass
+        # for child in node.children:
+        #     pass
             #  child_name = child.__class__.__name__
             #  method_class = ConfigMethod.get_class(child_name, sconfig, config)
             #  child_name = child_name.split('-')[0]
@@ -386,7 +400,7 @@ class ConfigNode:
         # 接收触发器产生的事件{'info02': (__x0 + __s0, {'__x0': 'self.c0.info1'}, {'__s0': 'infos'})}
         # 计算属性值的表达式expr，变量映射xmap（实例化时，映射值初始化为对应的值），字符串映射smap
         # class_attr存储了这些内容，不需要再额外添加变量
-        # self.receiver = {}
+        # self.responder = {}
         self._parent = None
         self._children = []
 
@@ -403,7 +417,7 @@ class ConfigNode:
         """获取索引注解."""
         if name not in self.class_attr:
             return nbase
-        line, note, check, attr = self.class_attr[name]
+        _, note, _, _ = self.class_attr[name]
         return note.get(ntype, nbase)
 
     def get_ids(self, name):
@@ -572,8 +586,10 @@ class Config:
         设置初始参数.
 
         unsafe: 是否允许配置是不安全的（属性中引用了作用域外的变量），默认为False，开启unsafe选项同样会忽略属性中的语法错误和表达式的安全性检查
+        checkbase: 是否检查全局类是否继承自Node类，不检查会重新生成该类的定义并自动继承Node类，但会修改globals()的全局变量，可能导致线程的不安全，同时自动继承的方法不确定是否存在隐患
         """
         self.unsafe = kwargs.get('unsafe', False)
+        self.checkbase = kwargs.get('checkbase', True)
 
     def _load(self, lines, sconfig):
         config = {
@@ -822,10 +838,15 @@ class Config:
                         base_ids.update(base.ids)
                     check_ids = set(base_ids) & set(ids) - set(('root', 'self'))
                     if check_ids:  # 别名存在于根类中
-                        return False, (line_number, line_real, 'Alias already in base class')
+                        class_real_name
             except Exception:
                 Log.exception()
                 return False, (line_number, line_real, 'Create class failed')
+
+            if self.checkbase:
+                node_type = sconfig['globals'].get(class_real_name)
+                if node_type and not ConfigMethod.check_parent_class(node_type):
+                    return False, (line_number, line_real, 'Global class must inherit from node')
 
             try:  # 查找父节点
                 parent = cursor_node
@@ -891,44 +912,33 @@ class Config:
 
     def create_class(self, root, sconfig, config):
         """创建新的类."""
-        for node, _ in root.walk(isroot=False):
-            print(node._trigger, node._reflex)
-
-        def check_parent_class(base, deep=0):
-            if deep > 32:  # 类层级太多或者循环继承
-                return False
-            if base == Node:
-                return True
-            if base == object:
-                return False
-            for b in base.__bases__:
-                if check_parent_class(b, deep + 1):
-                    return True
-            return False
-
         # 导入全局变量
-        for node_name in config['newclass'].keys():
+        for node_name, node in config['node'].items():
             if ConfigMethod.CLASS_SPLIT in node_name:
                 continue
 
-            # 插件类或外部类，将类与节点绑定，类初始化时按照配置树的结构初始类的成员变量
-            if node_name in globals():
-                node_type = globals()[node_name]
-            elif node_name in sconfig['plugins']:
-                node_type = sconfig['plugins'][node_name]
+            # 外部类，如果没有继承自Node节点则添加Node节点，但不推荐
+            node_type = globals().get(node_name)
+            if node_type is None:  # 不是全局的类跳过
+                continue
 
-            # 根据的父类和属性重新生成类
-            base_list = []
-            for base in node_type.__bases__:
-                if base == object:
-                    continue
-                base_list.append(base)
-            if not check_parent_class(node_type):  # 父类中不存在Node节点
+            # 父类中不存在Node节点时，根据的父类和属性重新生成类
+            if not ConfigMethod.check_parent_class(node_type):
+                base_list = []
+                for base in node_type.__bases__:
+                    if base == object:
+                        continue
+                    base_list.append(base)
                 base_list.append(Node)
 
-            base_attr = dict(node_type.__dict__)
-            base_attr['_config'] = node_name, root, sconfig, config
-            globals()[node_name] = type(node_name, tuple(base_list), base_attr)
+                base_attr = dict(node_type.__dict__)
+                node_type = type(node_name, tuple(base_list), base_attr)
+                globals()[node_name] = node_type
+            node_type._trigger = node.trigger
+            for key, val in node.class_attr:
+                print(key, val)
+            node_type._responder = node.class_attr
+            print(node.class_attr)
 
     def load(self, data):
         """从文件或字符串中加载配置."""
@@ -953,7 +963,7 @@ class Config:
             Log.exception()
             return None
 
-        # self.create_class(root, sconfig, config)
+        self.create_class(root, sconfig, config)
         return root
 
 
@@ -963,7 +973,7 @@ if __name__ == '__main__':
 
         pass
 
-    class TestWidget05:
+    class TestWidget05(Node):
         """TestWidget05."""
 
         def __init__(self):
@@ -976,8 +986,8 @@ if __name__ == '__main__':
     TestWidget05.__name__ = 'abc'
 
     Manager.auto_load()
-    config = Config()
-    tree = config.load('config/testconfig.pv')
+    conf = Config()
+    tree = conf.load('config/testconfig.pv')
     # tree.show()
     # print(tree.children[2].name)
     # tree.children[1].children[0].name = 'xc'
