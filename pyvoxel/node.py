@@ -2,9 +2,9 @@
 from pyvoxel.log import Log
 
 
-#类中attr属性改变时触发on_attr事件，同时同步改变关联的值
+# 类中attr属性改变时触发on_attr事件，同时同步改变关联的值
 class Node(object):
-    def __new__(cls): #不用在子类中调用super初始化
+    def __new__(cls):  # 不用在子类中调用super初始化
         cls._trigger = {}
         cls._reflex = {}
         cls.parent = None
@@ -21,7 +21,7 @@ class Node(object):
         except Exception as ex:
             Log.error(ex)
 
-    #调用on_函数
+    # 调用on_函数
     def _on_func(self, name, ovalue, value):
         on_name = 'on_' + name
         if on_name in self.__dict__:
@@ -32,7 +32,7 @@ class Node(object):
             for node, nname in self._trigger[name]:
                 node._update_value(nname, (self, name), value)
 
-    #更新关联类的值
+    # 更新关联类的值
     def _update_value(self, name, base, basev):
         try:
             expr, pattern, local = self._reflex[name]

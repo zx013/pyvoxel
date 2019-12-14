@@ -385,7 +385,8 @@ class ConfigNode:
         self.trigger = {}
         # 接收触发器产生的事件{'info02': (__x0 + __s0, {'__x0': 'self.c0.info1'}, {'__s0': 'infos'})}
         # 计算属性值的表达式expr，变量映射xmap（实例化时，映射值初始化为对应的值），字符串映射smap
-        self.receiver = {}
+        # class_attr存储了这些内容，不需要再额外添加变量
+        # self.receiver = {}
         self._parent = None
         self._children = []
 
