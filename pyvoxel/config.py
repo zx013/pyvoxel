@@ -183,13 +183,6 @@ class ConfigMethod:
         return ''
 
     @classmethod
-    def get_class(self, name, config):
-        """获取类的定义."""
-        if name in config['node']:  # 先查找新建的类
-            return config['node'][name]
-        return None
-
-    @classmethod
     def check_parent_class(self, base, deep=0):
         """检查base继承的节点中是否包含Node类."""
         if deep > 32:  # 类层级太多或者循环继承
@@ -311,30 +304,25 @@ class Node:
 
     def __new__(cls):  # 不用在子类中调用super初始化
         """初始化触发器等数据."""
-        cls._init()
+        cls._init(cls)
         return super().__new__(cls)
 
-    @classmethod
     def _init(cls):
-        cls._trigger = {}
-        cls._responder = {}
         cls.parent = None
         cls.children = []
-        if not hasattr(cls, '_config'):
+        if not hasattr(cls, '_confignode'):
             return
 
-        # name, root, sconfig, config = getattr(cls, '_config')
-        # node = config['newnode'][name]
-        # print(node, name, node.__class__.__name__)
+        confignode = cls._confignode
+        sconfig = cls._sconfig
+        config = cls._config
 
-        # for child in node.children:
-        #     pass
-            #  child_name = child.__class__.__name__
-            #  method_class = ConfigMethod.get_class(child_name, sconfig, config)
-            #  child_name = child_name.split('-')[0]
-            #  is_local, child_node = ConfigMethod.get_class(child_name, sconfig, {'newclass': {}, 'otherclass': {}})
-            #  print(child_name, child_node)
-            #  cls.children.append(child_node())
+        trigger = {}
+        # print(confignode.name, confignode.trigger, confignode.children)
+        # for child in confignode.children:
+        #     print(child.class_base[0].name, child.class_base[0].class_base)
+
+        #     cls.children.append(child_node())
 
     def __setattr__(self, name, value):
         """改变变量时触发数据同步."""
@@ -386,11 +374,11 @@ class ConfigNode:
         self.name = name  # 类的名称
         self._ids = ids  # 类的索引
         # 存放属性的名称
-        # {'name1': ("'testname1'", {}, {}), 'name2': ('__x0 + __s0', {'__x0': 'self.name1'}, {'__s0': 'testname2'})}
+        # {'name1': (12, {'type': 'str'}, 'static', ("'testname1'", {}, {})),
+        # 'name2': (23, {'safe': 'unsafe'}, 'dynamic', ('__x0 + __s0', {'__x0': 'self.name1'}, {'__s0': 'testname2'})}
+        # 行号，注解，状态，解析参数
+        # 状态：静态变量(static)，动态变量(dynamic)，未检查变量(uncheck)
         self.class_attr = {}
-        # 标记属性的状态，静态变量(static)，动态变量(dynamic)，未检查变量(uncheck)
-        # {'name1': 'static', 'name2': 'dynamic', 'name3': 'uncheck'}
-        self.check_attr = {}
         self.class_base = []  # 继承的父类对应的节点
 
         # 保存变量触发的逻辑{'info01': {'self.p': {'info02': '__x0'}}}
@@ -790,25 +778,30 @@ class Config:
 
             class_attr = {}  # 需要继承的属性
             class_base = []  # 需要继承的类
-            if operate_type in ('newclass', 'findclass'):
-                if operate_type == 'newclass':  # <T(S)>, <T(S) -> t>
-                    cls_list = [ConfigMethod.real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
-                    base_type = {cls_name: ConfigMethod.class_type(cls_name, sconfig, config) for cls_name in cls_list}
-                elif operate_type == 'findclass':  # T(t) -> r
-                    base_type = {class_real_name: ConfigMethod.class_type(class_real_name, sconfig, config)}
-
-                for cls_name, cls_type in base_type.items():
-                    if not cls_type:  # 父类不存在
-                        return False, (line_number, line_real, 'Base class not exist')
-
-                for cls_name, cls_type in base_type.items():  # 新建配置类不直接使用外部类，防止不必要的初始化
-                    cls = ConfigMethod.get_class(cls_name, config)
-                    if not cls:  # 不考虑插件类和外部类
-                        continue
-                    class_base.append(cls)
-                    class_attr.update(cls.class_attr)
-            elif operate_type not in ('baseclass', 'aliasclass'):  # <T>, <T -> t>
+            if operate_type not in ('newclass', 'baseclass', 'aliasclass', 'findclass'):
                 return False, (line_number, line_real, 'Operate type error')
+
+            if operate_type == 'newclass':  # <T(S)>, <T(S) -> t>
+                cls_list = [ConfigMethod.real_name(cls_name, cls_alias) for cls_name, cls_alias in data]
+                base_type = {cls_name: ConfigMethod.class_type(cls_name, sconfig, config) for cls_name in cls_list}
+            elif operate_type == 'baseclass':  # <T>
+                base_type = {class_name: ConfigMethod.class_type(class_name, sconfig, config)}
+            elif operate_type == 'aliasclass':  # <T -> t>
+                base_type = {class_name: ConfigMethod.class_type(class_name, sconfig, config)}
+            elif operate_type == 'findclass':  # T(t) -> r
+                base_type = {class_real_name: ConfigMethod.class_type(class_real_name, sconfig, config)}
+
+            for cls_name, cls_type in base_type.items():
+                if not cls_type:  # 父类不存在
+                    return False, (line_number, line_real, 'Base class not exist')
+
+            for cls_name, cls_type in base_type.items():  # 新建配置类不直接使用外部类，防止不必要的初始化
+                cls = config['node'].get(cls_name)
+                if not cls:  # 插件类和外部类重新创建一个空的节点，确保继承顺序
+                    cls = ConfigNode(cls_name, {})
+                    config['node'][cls_name] = cls
+                class_base.append(cls)
+                class_attr.update(cls.class_attr)
 
             try:  # 创建节点
                 ids = dict(cite_class.get(nest_key, {}))
@@ -908,12 +901,18 @@ class Config:
                 # if 'other' in attr_note:
                 #     print(attr[0].__class__.__name__)
 
+        # for node, deep in root.walk(isroot=False):
+        #     for key, val in node.class_attr.items():
+        #         pass  # print(node.name, key, val)
+        #     print(node.class_base)
+
         return True, (root, config)
 
     def create_class(self, root, sconfig, config):
         """创建新的类."""
         # 导入全局变量
         for node_name, node in config['node'].items():
+            print(node_name, node.class_base)
             if ConfigMethod.CLASS_SPLIT in node_name:
                 continue
 
@@ -934,11 +933,12 @@ class Config:
                 base_attr = dict(node_type.__dict__)
                 node_type = type(node_name, tuple(base_list), base_attr)
                 globals()[node_name] = node_type
-            node_type._trigger = node.trigger
-            for key, val in node.class_attr:
-                print(key, val)
-            node_type._responder = node.class_attr
-            print(node.class_attr)
+            # node_type._trigger = node.trigger
+            # node_type._responder = node.class_attr
+            node_type._confignode = node
+            node_type._sconfig = sconfig
+            node_type._config = config
+            # print(node.class_attr)
 
     def load(self, data):
         """从文件或字符串中加载配置."""
@@ -968,7 +968,7 @@ class Config:
 
 
 if __name__ == '__main__':
-    class TestWidget:
+    class TestWidget(Node):
         """TestWidget."""
 
         pass

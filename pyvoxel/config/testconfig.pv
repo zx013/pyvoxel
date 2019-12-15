@@ -29,6 +29,7 @@
         name: 'name02'
         TestWidget1(tw1):
             name: 'name03'
+            TestWidget:
 
 <TestWidget -> tw3>:
     name: 'name03'
