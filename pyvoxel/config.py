@@ -776,7 +776,7 @@ class Config:
             elif operate_type == 'findclass':
                 class_real_name = ConfigMethod.real_name(class_name, data)
 
-            class_attr = {}  # 需要继承的属性
+            class_attr = {}  # 需要继承的属性，改成列表形式，在有外部类时可以确定属性继承次序
             class_base = []  # 需要继承的类
             if operate_type not in ('newclass', 'baseclass', 'aliasclass', 'findclass'):
                 return False, (line_number, line_real, 'Operate type error')
@@ -825,13 +825,13 @@ class Config:
                 # class_attr中除了_ids都需要继承，类自身的变量在实例化时判断，暂不考虑
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'):  # 需要新建的类（根类）
                     config['node'][class_real_name] = node
-                else:
+                else:  # 类的别名(findclass)不能和定义类中别名相同
                     base_ids = {}
                     for base in node.class_base:
                         base_ids.update(base.ids)
                     check_ids = set(base_ids) & set(ids) - set(('root', 'self'))
                     if check_ids:  # 别名存在于根类中
-                        class_real_name
+                        return False, (line_number, line_real, 'Alias define in base class')
             except Exception:
                 Log.exception()
                 return False, (line_number, line_real, 'Create class failed')
