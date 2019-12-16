@@ -7,10 +7,7 @@
 		{"include": "#comment"},
 		{"include": "#defineclass"},
 		{"include": "#findclass"},
-		{"include": "#alias"},
-		{"include": "#attr"},
-		{"include": "#notekeys"},
-		{"include": "#note"}
+		{"include": "#attribute"}
 	],
 	"repository": {
 		"keywords": {
@@ -45,66 +42,113 @@
 		},
 		"defineclass": {
 			"begin": "^<+[A-Z]\\w*",
-			"end": ">[ ]*:",
+			"end": "$|>[ ]*:[ ]*",
 			"beginCaptures": {
-				"0": { "name": "entity.name.type" }
+				"0": { "name": "defineclass.base" }
 			},
 			"endCaptures": {
-				"0": { "name": "entity.name.type" }
+				"0": { "name": "defineclass.base" }
 			},
 			"patterns": [
 				{
-					"name": "variable",
-					"match": "\\b\\w+\\b"
+					"begin": "\\(",
+					"end": "$|\\)",
+					"name": 
+					"defineclass.brackets",
+					"patterns": [
+						{
+							"name": "defineclass.inherit",
+							"match": "\\b[A-Z]+\\w+\\b"
+						},
+						{
+							"name": "defineclass.inheritalias",
+							"match": "\\(\\b[a-z0-9_]+\\b\\)"
+						}
+					]
 				},
 				{
-					"name": "variable",
-					"match": "\\(|\\)|,"
-				},
-				{
-					"name": "constant",
+					"name": "defineclass.arrow",
 					"match": "->"
+				},
+				{
+					"name": "defineclass.alias",
+					"match": "\\b\\w+\\b"
 				}
 			]
 		},
 		"findclass": {
 			"begin": "^(    )+[A-Z]\\w*",
-			"end": ":",
+			"end": "$|:",
 			"beginCaptures": {
-				"0": { "name": "entity.name.function" }
+				"0": { "name": "findclass.base" }
 			},
 			"patterns": [
 				{
-					"name": "punctuation.definition.variable",
+					"name": "findclass.alias",
 					"match": "\\b\\w+\\b"
 				},
 				{
-					"name": "punctuation.definition.variable",
+					"name": "findclass.brackets",
 					"match": "\\(|\\)"
 				},
 				{
-					"name": "constant",
+					"name": "findclass.arrow",
 					"match": "->"
 				}
 			]
-		  },
-		"alias": {
-			"name": "string.regexp",
-			"match": "[A-Z]\\w+\\([a-z0-9_]+\\)"
 		},
-		"note": {
+		"attribute": {
 			"begin": "^(    )+[a-z0-9_]+",
-			"end": ":",
+			"end": "$",
 			"beginCaptures": {
-				"0": { "name": "constant.language" }
+				"0": { "name": "attribute.variable" }
 			},
 			"endCaptures": {
-				"0": { "name": "constant.other.symbol" }
+				"0": { "name": "attribute.variable" }
 			},
 			"patterns": [
 				{
-					"name": "meta.tag",
-					"match": "\\b(safe|unsafe|static|dynamic|selfindex|baseindex|selfchild|basechild|dict|complex|property|enumerate|bytes|filter|reversed|super|range|object|frozenset|map|set|zip|type|str|memoryview|staticmethod|float|bool|classmethod|int|tuple|list|bytearray|slice)\\b"
+					"name": "attribute.variable",
+					"match": "^(    )+[a-z0-9_]+"
+				},
+				{
+					"begin": "\\(",
+					"end": "$|\\)",
+					"beginCaptures": {
+						"0": { "name": "attribute.brackets" }
+					},
+					"endCaptures": {
+						"0": { "name": "attribute.brackets" }
+					},
+					"patterns": [
+						{
+							"name": "attribute.note.keywords",
+							"match": "\\b(safe|unsafe|static|dynamic|selfindex|baseindex|selfchild|basechild|dict|complex|property|enumerate|bytes|filter|reversed|super|range|object|frozenset|map|set|zip|type|str|memoryview|staticmethod|float|bool|classmethod|int|tuple|list|bytearray|slice)\\b"
+						},
+						{
+							"name": "attribute.note.keywords",
+							"match": "\\b[A-Z]\\w+\\b"
+						}
+					]
+				},
+				{
+					"begin": ":",
+					"end": "$",
+					"beginCaptures": {
+						"0": { "name": "attribute.brackets" }
+					},
+					"patterns": [
+						{
+							"include": "#keywords"
+						},
+						{
+							"include": "#strings"
+						},
+						{
+							"name": "attribute.expr.variable",
+							"match": "(\\b\\w+\\b\\.)*\\b\\w+\\b"
+						}
+					]
 				}
 			]
 		}
