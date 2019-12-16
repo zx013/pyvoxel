@@ -418,7 +418,7 @@ class ConfigNode:
             ids = {}
             for base in self.class_base:
                 ids.update(base.get_ids(name))
-            ids = dict(self._ids)
+            ids.update(self._ids)
         return ids
 
     @property
@@ -447,6 +447,14 @@ class ConfigNode:
             for base in self.class_base:
                 children += base.children
         return children
+
+    def get_attr(self):
+        """获取属性列表."""
+        class_attr = {}
+        for base in self.class_base:
+            class_attr.update(base.get_attr())
+        class_attr.update(self.class_attr)
+        return dict(class_attr)
 
     def _walk(self, deep, isroot=True):
         if isroot:
@@ -901,18 +909,14 @@ class Config:
                 # if 'other' in attr_note:
                 #     print(attr[0].__class__.__name__)
 
-        # for node, deep in root.walk(isroot=False):
-        #     for key, val in node.class_attr.items():
-        #         pass  # print(node.name, key, val)
-        #     print(node.class_base)
-
         return True, (root, config)
 
     def create_class(self, root, sconfig, config):
         """创建新的类."""
         # 导入全局变量
         for node_name, node in config['node'].items():
-            print(node_name, node.class_base)
+            for base in node.class_base:
+                print(node_name, [c.name for c in base.class_base], base.get_attr())
             if ConfigMethod.CLASS_SPLIT in node_name:
                 continue
 
