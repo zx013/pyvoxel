@@ -41,7 +41,7 @@
     TestWidget(tw2) -> tw4:
         # info3: c0.c0.c0
         info6: 'selfinfo6'
-        # info7: info6
+        info7: info6
         TestPlugin02:
             TestPlugin01:
                 TestPlugin02:

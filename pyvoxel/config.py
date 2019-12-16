@@ -19,6 +19,7 @@ class ConfigMethod:
         'safe': ('safe', 'unsafe'),  # 安全/不安全，属性是否需要安全检查，不设置的使用全局安全设置
         'state': ('static', 'dynamic'),  # 静态/动态，属性是否是静态属性（不使用外部变量进行动态计算）
         # 动态属性索引和子节点访问优先使用的方式，自身的类(selfindex)，来源的基类(baseindex，默认)
+        # 属性未被覆盖时该注解才会生效，使属性按照自身类或来源类解析
         'index': ('selfindex', 'baseindex'),
         # 子节点访问顺序，先访问自身子节点(selfchild)，先访问基类子节点(basechild，默认)
         # index设置为selfindex时生效，若index为baseindex，会将self解析到基类中
@@ -378,7 +379,7 @@ class ConfigNode:
         # 'name2': (23, {'safe': 'unsafe'}, 'dynamic', ('__x0 + __s0', {'__x0': 'self.name1'}, {'__s0': 'testname2'})}
         # 行号，注解，状态，解析参数
         # 状态：静态变量(static)，动态变量(dynamic)，未检查变量(uncheck)
-        self.class_attr = {}
+        self._attr = {}
         self.class_base = []  # 继承的父类对应的节点
 
         # 保存变量触发的逻辑{'info01': {'self.p': {'info02': '__x0'}}}
@@ -403,9 +404,9 @@ class ConfigNode:
 
     def get_note(self, name, ntype, nbase):
         """获取索引注解."""
-        if name not in self.class_attr:
+        if name not in self.attr:
             return nbase
-        _, note, _, _ = self.class_attr[name]
+        _, note, _, _ = self.attr[name]
         return note.get(ntype, nbase)
 
     def get_ids(self, name):
@@ -448,13 +449,23 @@ class ConfigNode:
                 children += base.children
         return children
 
-    def get_attr(self):
+    @property
+    def attr(self):
         """获取属性列表."""
-        class_attr = {}
+        attr = {}
         for base in self.class_base:
-            class_attr.update(base.get_attr())
-        class_attr.update(self.class_attr)
-        return dict(class_attr)
+            attr.update(base.attr)
+        attr.update(self._attr)
+        return attr
+
+    def find_attr(self, name):
+        """获取属性来源于哪个节点."""
+        if name in self._attr:
+            return self
+        for base in self.class_base[::-1]:
+            if base.find_attr(name):
+                return base
+        return None
 
     def _walk(self, deep, isroot=True):
         if isroot:
@@ -474,7 +485,7 @@ class ConfigNode:
             spacesep = '    ' * (deep - 1)
             print(spacesep + '<' + node.name + '>:')
             spacesep += '    '
-            for key, val in node.class_attr.items():
+            for key, val in node.attr.items():
                 if node.check_attr[key] == 'dynamic':
                     val = val[0]
                 print(spacesep + key + ': ' + str(val))
@@ -489,7 +500,7 @@ class ConfigNode:
     #  使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
     #  使用bind绑定时，所有的变量必须可访问
     def _execute(self, name):
-        if name not in self.class_attr:
+        if name not in self.attr:
             ids = self.get_ids(name)
             if name in ids:
                 return ids[name]
@@ -506,7 +517,7 @@ class ConfigNode:
             raise Exception
 
         # 行号，来源节点，注解，校验标志，属性
-        line, note, check, attr = self.class_attr[name]
+        line, note, check, attr = self.attr[name]
 
         if check in ('static', 'dynamic'):
             return attr[0]
@@ -545,7 +556,8 @@ class ConfigNode:
             local_info[iname] = base_cls._execute(base_name)
 
         value = eval(expr, None, local_info)
-        self.class_attr[name] = line, note, check, (value, (expr, xmap, smap))
+        print(self.name, name, self.find_attr(name) == self)
+        self._attr[name] = line, note, check, (value, (expr, xmap, smap))
 
         # 动态属性添加触发器，执行成功后添加触发器
         if check == 'dynamic':
@@ -784,7 +796,7 @@ class Config:
             elif operate_type == 'findclass':
                 class_real_name = ConfigMethod.real_name(class_name, data)
 
-            class_attr = {}  # 需要继承的属性，改成列表形式，在有外部类时可以确定属性继承次序
+            attr = {}  # 保存类中的属性，selfindex注解的属性进行复制
             class_base = []  # 需要继承的类
             if operate_type not in ('newclass', 'baseclass', 'aliasclass', 'findclass'):
                 return False, (line_number, line_real, 'Operate type error')
@@ -809,28 +821,32 @@ class Config:
                     cls = ConfigNode(cls_name, {})
                     config['node'][cls_name] = cls
                 class_base.append(cls)
-                class_attr.update(cls.class_attr)
+
+                for k, v in cls.attr.items():  # 只保存selfindex属性
+                    _, note, _, _ = v
+                    if note.get('index') == 'selfindex':
+                        attr[k] = tuple(v)  # 目前不需要深复制，但后续改动可能需要深复制
 
             try:  # 创建节点
                 ids = dict(cite_class.get(nest_key, {}))
                 # 类中可以使用的索引序列，先用行号索引，再替换成对应节点，用字典保证相同nest_key对应的节点为同一个
-                attr = cite_cursor.get(line_number, {})  # 类中的属性
-                for k, v in attr.items():
+                cattr = cite_cursor.get(line_number, {})  # 类中的属性
+                for k, v in cattr.items():
                     linen, liner, linec, note, expr = v
 
                     # 检查注解中的类是否存在
                     if 'other' in note and note['other'] not in set(config['node']) | sconfig['plugins']:
                         return False, (linen, liner, 'Attr note not exist')
                     # 当前行号，检查标志，表达式解析结果
-                    class_attr[k] = linen, note, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
+                    attr[k] = linen, note, 'uncheck', ConfigMethod.analyse(expr, ids.keys())  # 默认添加self, root
 
                 ids['self'] = line_number
                 node = ConfigNode(class_real_name, ids)
 
-                node.class_attr = class_attr
+                node._attr = attr
                 node.class_base = class_base
 
-                # class_attr中除了_ids都需要继承，类自身的变量在实例化时判断，暂不考虑
+                # attr中除了_ids都需要继承，类自身的变量在实例化时判断，暂不考虑
                 if operate_type in ('baseclass', 'aliasclass', 'newclass'):  # 需要新建的类（根类）
                     config['node'][class_real_name] = node
                 else:  # 类的别名(findclass)不能和定义类中别名相同
@@ -878,14 +894,14 @@ class Config:
         for node, deep in root.walk(isroot=False):
             for ids_key, ids_line in node._ids.items():
                 node._ids[ids_key] = nest_line.get(ids_line)
-            # for attr_key, attr_val in node.class_attr.items():
+            # for attr_key, attr_val in node.attr.items():
             #     line_number, attr_line, attr_note, attr_check, attr = attr_val
-            #     node.class_attr[attr_key] = line_number, nest_line.get(attr_line), attr_note, attr_check, attr
+            #     node._attr[attr_key] = line_number, nest_line.get(attr_line), attr_note, attr_check, attr
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
-            for name in node.class_attr.keys():
-                line_number, attr_note, attr_check, attr = node.class_attr[name]
+            for name in node.attr.keys():
+                line_number, attr_note, attr_check, attr = node.attr[name]
                 line_real = line_map[line_number]
 
                 # 以safe注解为准，未设置则使用默认safe配置
@@ -894,7 +910,7 @@ class Config:
                 if not node.execute(name) and safe == 'safe':
                     return False, (line_number, line_real, 'Attr is unsafe')
 
-                line_number, attr_note, attr_check, attr = node.class_attr[name]
+                line_number, attr_note, attr_check, attr = node.attr[name]
                 if attr_check == 'uncheck':  # uncheck字段不进行检查
                     continue
 
@@ -915,8 +931,8 @@ class Config:
         """创建新的类."""
         # 导入全局变量
         for node_name, node in config['node'].items():
-            for base in node.class_base:
-                print(node_name, [c.name for c in base.class_base], base.get_attr())
+            # for base in node.class_base:
+            #     print(node_name, [c.name for c in base.class_base])
             if ConfigMethod.CLASS_SPLIT in node_name:
                 continue
 
@@ -937,12 +953,11 @@ class Config:
                 base_attr = dict(node_type.__dict__)
                 node_type = type(node_name, tuple(base_list), base_attr)
                 globals()[node_name] = node_type
-            # node_type._trigger = node.trigger
-            # node_type._responder = node.class_attr
+
             node_type._confignode = node
             node_type._sconfig = sconfig
             node_type._config = config
-            # print(node.class_attr)
+            # print(node.attr)
 
     def load(self, data):
         """从文件或字符串中加载配置."""
