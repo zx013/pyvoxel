@@ -458,15 +458,6 @@ class ConfigNode:
         attr.update(self._attr)
         return attr
 
-    def find_attr(self, name):
-        """获取属性来源于哪个节点."""
-        if name in self._attr:
-            return self
-        for base in self.class_base[::-1]:
-            if base.find_attr(name):
-                return base
-        return None
-
     def _walk(self, deep, isroot=True):
         if isroot:
             yield self, deep
@@ -556,7 +547,6 @@ class ConfigNode:
             local_info[iname] = base_cls._execute(base_name)
 
         value = eval(expr, None, local_info)
-        print(self.name, name, self.find_attr(name) == self)
         self._attr[name] = line, note, check, (value, (expr, xmap, smap))
 
         # 动态属性添加触发器，执行成功后添加触发器
@@ -900,8 +890,8 @@ class Config:
 
         # 通过索引序列解析属性
         for node, deep in root.walk(isroot=False):
-            for name in node.attr.keys():
-                line_number, attr_note, attr_check, attr = node.attr[name]
+            for name in node._attr.keys():
+                line_number, attr_note, attr_check, attr = node._attr[name]
                 line_real = line_map[line_number]
 
                 # 以safe注解为准，未设置则使用默认safe配置
@@ -910,7 +900,7 @@ class Config:
                 if not node.execute(name) and safe == 'safe':
                     return False, (line_number, line_real, 'Attr is unsafe')
 
-                line_number, attr_note, attr_check, attr = node.attr[name]
+                line_number, attr_note, attr_check, attr = node._attr[name]
                 if attr_check == 'uncheck':  # uncheck字段不进行检查
                     continue
 
@@ -929,10 +919,8 @@ class Config:
 
     def create_class(self, root, sconfig, config):
         """创建新的类."""
-        # 导入全局变量
         for node_name, node in config['node'].items():
-            # for base in node.class_base:
-            #     print(node_name, [c.name for c in base.class_base])
+            print(node_name, node._attr, node.__dict__.keys())
             if ConfigMethod.CLASS_SPLIT in node_name:
                 continue
 
