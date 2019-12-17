@@ -4,6 +4,7 @@ from pyvoxel.manager import Manager
 # from pyvoxel.node import Node
 from pyvoxel.log import Log
 from ast import literal_eval
+import copy
 import re
 
 
@@ -309,16 +310,12 @@ class Node:
         return super().__new__(cls)
 
     def _init(cls):
-        cls.parent = None
-        cls.children = []
         if not hasattr(cls, '_confignode'):
             return
 
         confignode = cls._confignode
-        sconfig = cls._sconfig
-        config = cls._config
+        # confignode.create(cls)
 
-        trigger = {}
         # print(confignode.name, confignode.trigger, confignode.children)
         # for child in confignode.children:
         #     print(child.class_base[0].name, child.class_base[0].class_base)
@@ -392,6 +389,22 @@ class ConfigNode:
         # self.responder = {}
         self._parent = None
         self._children = []
+
+    def create(self, *args, **kwargs):
+        """实例化节点."""
+        if self.name in globals():
+            cls_type = globals()[self.name]
+        else:
+            cls_type = type(self.name, (), {})
+        cls = cls_type(*args, **kwargs)
+
+        attr = {}
+        attr['parent'] = None
+        attr['children'] = []
+        attr['_trigger'] = copy.deepcopy(self.trigger)
+        print(self.attr)
+
+        return cls
 
     @property
     def ids(self):
@@ -815,7 +828,7 @@ class Config:
                 for k, v in cls.attr.items():  # 只保存selfindex属性
                     _, note, _, _ = v
                     if note.get('index') == 'selfindex':
-                        attr[k] = tuple(v)  # 目前不需要深复制，但后续改动可能需要深复制
+                        attr[k] = copy.deepcopy(v)  # 后续可能需要深复制
 
             try:  # 创建节点
                 ids = dict(cite_class.get(nest_key, {}))
@@ -920,7 +933,7 @@ class Config:
     def create_class(self, root, sconfig, config):
         """创建新的类."""
         for node_name, node in config['node'].items():
-            print(node_name, node._attr, node.__dict__.keys())
+            # print(node_name, node._attr, node.__dict__.keys())
             if ConfigMethod.CLASS_SPLIT in node_name:
                 continue
 
@@ -945,7 +958,8 @@ class Config:
             node_type._confignode = node
             node_type._sconfig = sconfig
             node_type._config = config
-            # print(node.attr)
+
+            node.create()
 
     def load(self, data):
         """从文件或字符串中加载配置."""
