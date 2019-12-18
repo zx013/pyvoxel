@@ -398,13 +398,58 @@ class ConfigNode:
             cls_type = type(self.name, (), {})
         cls = cls_type(*args, **kwargs)
 
-        attr = {}
-        attr['parent'] = None
-        attr['children'] = []
+        for ids, node in self._ids.items():
+            self.nodepath(node)
+        # 类的属性，触发器，父节点
+        # 索引列表，子节点列表，基类列表
+        attr = dict(self.attr)  # 应该标注来源自哪个类
+        # attr['_ids']
         attr['_trigger'] = copy.deepcopy(self.trigger)
-        print(self.attr)
+        print(self.name)
+
+        children = []
+        for child in self._children:
+            children.append(child.create(*args, **kwargs))
+
+        attr['parent'] = None
+        attr['children'] = children
+
+        # print(self.name, cls_type.__dict__, cls.__dict__)
+        cls.__dict__.update(attr)
 
         return cls
+
+    @property
+    def index(self):
+        """节点排在第几位."""
+        try:
+            return self.parent.children.index(self)
+        except Exception:
+            return -1
+
+    def nodepath(self, node):
+        """自身到node节点的路径."""
+        pathnode = []
+        root = node
+        while root.parent.parent:
+            pathnode.append(root.index)
+            root = root.parent
+
+        root = self
+        while root.parent.parent:
+            if not pathnode:
+                break
+            if root.index != pathnode[0]:
+                break
+            pathnode.pop(0)
+            root = root.parent
+        pathself = ['self']
+        while root.parent.parent:
+            pathself.append('p')
+            root = root.parent
+
+        path = '.'.join(pathself + ['c{}'.format(i) for i in pathnode])
+        print(self.name, node.name, path)
 
     @property
     def ids(self):
@@ -955,9 +1000,7 @@ class Config:
                 node_type = type(node_name, tuple(base_list), base_attr)
                 globals()[node_name] = node_type
 
-            node_type._confignode = node
-            node_type._sconfig = sconfig
-            node_type._config = config
+            # node_type._node = node
 
             node.create()
 
