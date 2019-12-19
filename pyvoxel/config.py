@@ -371,6 +371,7 @@ class ConfigNode:
         """初始化."""
         self.name = name  # 类的名称
         self._ids = ids  # 类的索引
+        self._idspath = {}
         # 存放属性的名称
         # {'name1': (12, {'type': 'str'}, 'static', ("'testname1'", {}, {})),
         # 'name2': (23, {'safe': 'unsafe'}, 'dynamic', ('__x0 + __s0', {'__x0': 'self.name1'}, {'__s0': 'testname2'})}
@@ -398,14 +399,11 @@ class ConfigNode:
             cls_type = type(self.name, (), {})
         cls = cls_type(*args, **kwargs)
 
-        for ids, node in self._ids.items():
-            self.nodepath(node)
         # 类的属性，触发器，父节点
         # 索引列表，子节点列表，基类列表
         attr = dict(self.attr)  # 应该标注来源自哪个类
-        # attr['_ids']
         attr['_trigger'] = copy.deepcopy(self.trigger)
-        print(self.name)
+        print(self.name, self._idspath)
 
         children = []
         for child in self._children:
@@ -422,10 +420,7 @@ class ConfigNode:
     @property
     def index(self):
         """节点排在第几位."""
-        try:
-            return self.parent.children.index(self)
-        except Exception:
-            return -1
+        return self.parent.children.index(self)
 
     def nodepath(self, node):
         """自身到node节点的路径."""
@@ -449,7 +444,7 @@ class ConfigNode:
             root = root.parent
 
         path = '.'.join(pathself + ['c{}'.format(i) for i in pathnode])
-        print(self.name, node.name, path)
+        return path
 
     @property
     def ids(self):
@@ -941,7 +936,13 @@ class Config:
         # 将索引从行号替换成对应节点，不遍历基类的子节点
         for node, deep in root.walk(isroot=False):
             for ids_key, ids_line in node._ids.items():
-                node._ids[ids_key] = nest_line.get(ids_line)
+                try:
+                    pnode = nest_line.get(ids_line)
+                    node._ids[ids_key] = pnode
+                    node._idspath[ids_key] = node.nodepath(pnode)
+                except Exception:
+                    line_real = line_map[ids_line]
+                    return False, (ids_line, line_real, 'Node ids analyse failed')
             # for attr_key, attr_val in node.attr.items():
             #     line_number, attr_line, attr_note, attr_check, attr = attr_val
             #     node._attr[attr_key] = line_number, nest_line.get(attr_line), attr_note, attr_check, attr
