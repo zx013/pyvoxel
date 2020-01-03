@@ -20,11 +20,11 @@
     info(safe|dynamic): info1 + 'abc'
     info1(static|str): 'def'
     info2(list): [self, root, tw3]
-    info3(selfchild|selfindex): c0.c0
+    info3: c0.c0
     info4: name[c0.c0.name][0]
     info5(unsafe|TestPlugin01): TestPlugin01
     info6: 'baseinfo6'
-    info7(selfindex): info6
+    info7: info6
     TestWidget1(tw1) -> tw3:
         name: 'name02'
         TestWidget1(tw1):

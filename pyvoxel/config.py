@@ -19,12 +19,6 @@ class ConfigMethod:
     NOTE_INFO = {
         'safe': ('safe', 'unsafe'),  # 安全/不安全，属性是否需要安全检查，不设置的使用全局安全设置
         'state': ('static', 'dynamic'),  # 静态/动态，属性是否是静态属性（不使用外部变量进行动态计算）
-        # 动态属性索引和子节点访问优先使用的方式，自身的类(selfindex)，来源的基类(baseindex，默认)
-        # 属性未被覆盖时该注解才会生效，使属性按照自身类或来源类解析
-        'index': ('selfindex', 'baseindex'),
-        # 子节点访问顺序，先访问自身子节点(selfchild)，先访问基类子节点(basechild，默认)
-        # index设置为selfindex时生效，若index为baseindex，会将self解析到基类中
-        'child': ('selfchild', 'basechild'),
         # python内建的数据类型
         # 'dict', 'complex', 'property', 'enumerate', 'bytes', 'filter', 'reversed', 'super', 'range'
         # 'object', 'frozenset', 'map', 'set', 'zip', 'type', 'str', 'memoryview', 'staticmethod',
@@ -371,7 +365,7 @@ class ConfigNode:
         """初始化."""
         self.name = name  # 类的名称
         self._ids = ids  # 类的索引
-        self._idspath = {}
+        self._idspath = set()
         # 存放属性的名称
         # {'name1': (12, {'type': 'str'}, 'static', ("'testname1'", {}, {})),
         # 'name2': (23, {'safe': 'unsafe'}, 'dynamic', ('__x0 + __s0', {'__x0': 'self.name1'}, {'__s0': 'testname2'})}
@@ -391,30 +385,37 @@ class ConfigNode:
         self._parent = None
         self._children = []
 
-    def create(self, *args, **kwargs):
-        """实例化节点."""
+    def _create(self, ids, *args, **kwargs):
         if self.name in globals():
             cls_type = globals()[self.name]
         else:
             cls_type = type(self.name, (), {})
         cls = cls_type(*args, **kwargs)
 
-        # 类的属性，触发器，父节点
-        # 索引列表，子节点列表，基类列表
-        attr = dict(self.attr)  # 应该标注来源自哪个类
-        attr['_trigger'] = copy.deepcopy(self.trigger)
-        print(self.name, self._idspath)
+        dct = cls.__dict__
+        # 类的属性，基类列表
+        dct.update(self.attr)  # 应该标注来源自哪个类
+        ids.update({k: self for k in self._idspath})
+        print(self.name, self.trigger)
 
         children = []
-        for child in self._children:
-            children.append(child.create(*args, **kwargs))
+        for child in self.children:
+            child_cls = child._create(ids, *args, **kwargs)
+            child_cls.parent = cls
+            children.append(child_cls)
 
-        attr['parent'] = None
-        attr['children'] = children
+        dct['_trigger'] = copy.deepcopy(self.trigger)  # 必须最先初始化
+        dct['ids'] = ids
+        dct['parent'] = None
+        dct['children'] = children
 
         # print(self.name, cls_type.__dict__, cls.__dict__)
-        cls.__dict__.update(attr)
+        return cls
 
+    def create(self, *args, **kwargs):
+        """实例化节点."""
+        ids = {}  # 使用同一个ids，保证一致
+        cls = self._create(ids, *args, **kwargs)
         return cls
 
     @property
@@ -422,57 +423,13 @@ class ConfigNode:
         """节点排在第几位."""
         return self.parent.children.index(self)
 
-    def nodepath(self, node):
-        """自身到node节点的路径."""
-        pathnode = []
-        root = node
-        while root.parent.parent:
-            pathnode.append(root.index)
-            root = root.parent
-
-        root = self
-        while root.parent.parent:
-            if not pathnode:
-                break
-            if root.index != pathnode[0]:
-                break
-            pathnode.pop(0)
-            root = root.parent
-        pathself = ['self']
-        while root.parent.parent:
-            pathself.append('p')
-            root = root.parent
-
-        path = '.'.join(pathself + ['c{}'.format(i) for i in pathnode])
-        return path
-
     @property
     def ids(self):
         """索引映射."""
-        # 基类的引用的覆盖现有的引用，确保基类的引用有效
-        ids = dict(self._ids)
+        ids = dict()
         for base in self.class_base:
             ids.update(base.ids)
-        return ids
-
-    def get_note(self, name, ntype, nbase):
-        """获取索引注解."""
-        if name not in self.attr:
-            return nbase
-        _, note, _, _ = self.attr[name]
-        return note.get(ntype, nbase)
-
-    def get_ids(self, name):
-        """根据注解获取索引映射."""
-        if self.get_note(name, 'index', 'baseindex') == 'baseindex':
-            ids = dict(self._ids)
-            for base in self.class_base:
-                ids.update(base.get_ids(name))
-        else:
-            ids = {}
-            for base in self.class_base:
-                ids.update(base.get_ids(name))
-            ids.update(self._ids)
+        ids.update(self._ids)
         return ids
 
     @property
@@ -483,24 +440,10 @@ class ConfigNode:
     @property
     def children(self):
         """子节点."""
-        children = []
+        children = list(self._children)
         for base in self.class_base:
             children += base.children
-        children += self._children
         return children  # self._children
-
-    def get_children(self, name):
-        """根据注解获取子节点."""
-        if self.get_note(name, 'child', 'basechild') == 'basechild':
-            children = []
-            for base in self.class_base:
-                children += base.children
-            children += self._children
-        else:
-            children = list(self._children)
-            for base in self.class_base:
-                children += base.children
-        return children
 
     @property
     def attr(self):
@@ -545,7 +488,7 @@ class ConfigNode:
     #  使用bind绑定时，所有的变量必须可访问
     def _execute(self, name):
         if name not in self.attr:
-            ids = self.get_ids(name)
+            ids = self.ids
             if name in ids:
                 return ids[name]
             if name == 'root':
@@ -554,7 +497,7 @@ class ConfigNode:
                 return self.parent
             if name[0] == 'c':
                 index = name[1:]
-                children = self.get_children(name)
+                children = self.children
                 if index.isdigit():
                     return children[int(index)]
                 return children
@@ -577,11 +520,11 @@ class ConfigNode:
             # 定位变量所在的类
             rname = ''  # 逆向索引字符串
             plist = pname.split('.')
-            base_cls = self.get_ids(name)[plist[0]]
+            base_cls = self.ids[plist[0]]
 
             for pn in plist[1:-1]:
                 if pn.startswith('p'):
-                    for n, c in enumerate(base_cls.parent.get_children(name)):
+                    for n, c in enumerate(base_cls.parent.children):
                         if c == base_cls:
                             break
                     rname = '.c{}{}'.format(n, rname)
@@ -589,7 +532,7 @@ class ConfigNode:
                 elif pn.startswith('c'):
                     rname = '.p{}'.format(rname)
 
-                    base_cls = base_cls.get_children(name)[int(pn[1:])]
+                    base_cls = base_cls.children[int(pn[1:])]
             rname = 'self' + rname
 
             base_name = plist[-1]
@@ -839,7 +782,7 @@ class Config:
             elif operate_type == 'findclass':
                 class_real_name = ConfigMethod.real_name(class_name, data)
 
-            attr = {}  # 保存类中的属性，selfindex注解的属性进行复制
+            attr = {}  # 保存类中的属性
             class_base = []  # 需要继承的类
             if operate_type not in ('newclass', 'baseclass', 'aliasclass', 'findclass'):
                 return False, (line_number, line_real, 'Operate type error')
@@ -864,11 +807,6 @@ class Config:
                     cls = ConfigNode(cls_name, {})
                     config['node'][cls_name] = cls
                 class_base.append(cls)
-
-                for k, v in cls.attr.items():  # 只保存selfindex属性
-                    _, note, _, _ = v
-                    if note.get('index') == 'selfindex':
-                        attr[k] = copy.deepcopy(v)  # 后续可能需要深复制
 
             try:  # 创建节点
                 ids = dict(cite_class.get(nest_key, {}))
@@ -939,7 +877,8 @@ class Config:
                 try:
                     pnode = nest_line.get(ids_line)
                     node._ids[ids_key] = pnode
-                    node._idspath[ids_key] = node.nodepath(pnode)
+                    if ids_key != 'self' and node == pnode:
+                        node._idspath.add(ids_key)
                 except Exception:
                     line_real = line_map[ids_line]
                     return False, (ids_line, line_real, 'Node ids analyse failed')

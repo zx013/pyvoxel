@@ -123,7 +123,7 @@
 					"patterns": [
 						{
 							"name": "attribute.note.keywords",
-							"match": "\\b(safe|unsafe|static|dynamic|selfindex|baseindex|selfchild|basechild|dict|complex|property|enumerate|bytes|filter|reversed|super|range|object|frozenset|map|set|zip|type|str|memoryview|staticmethod|float|bool|classmethod|int|tuple|list|bytearray|slice)\\b"
+							"match": "\\b(safe|unsafe|static|dynamic|dict|complex|property|enumerate|bytes|filter|reversed|super|range|object|frozenset|map|set|zip|type|str|memoryview|staticmethod|float|bool|classmethod|int|tuple|list|bytearray|slice)\\b"
 						},
 						{
 							"name": "attribute.note.keywords",
