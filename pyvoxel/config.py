@@ -414,14 +414,9 @@ class ConfigNode:
 
     def create(self, *args, **kwargs):
         """实例化节点."""
-        ids = {}  # 使用同一个ids，保证一致
+        ids = {}  # 使用同一个ids，保证一致，但self需要额外处理
         cls = self._create(ids, *args, **kwargs)
         return cls
-
-    @property
-    def index(self):
-        """节点排在第几位."""
-        return self.parent.children.index(self)
 
     @property
     def ids(self):
@@ -484,8 +479,8 @@ class ConfigNode:
             Log.warning('{node} already has parent'.format(node=node))
         node._parent = self
 
-    #  使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
-    #  使用bind绑定时，所有的变量必须可访问
+    # 使用缩写语法，p代表parent，c1代表children[1]，缩写语法默认添加self
+    # 使用bind绑定时，所有的变量必须可访问
     def _execute(self, name):
         if name not in self.attr:
             ids = self.ids
